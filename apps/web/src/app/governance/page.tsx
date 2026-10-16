@@ -167,10 +167,12 @@ function ProposalCard({
   proposal,
   onVote,
   walletConnected,
+  isVoting,
 }: {
   proposal: Proposal
   onVote: (id: string, choice: VoteChoice) => void
   walletConnected: boolean
+  isVoting: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
   const isActive = proposal.status === 'active' && new Date(proposal.ends_at) > new Date()
@@ -224,10 +226,19 @@ function ProposalCard({
             <VoteButtons
               proposalId={proposal.id}
               userVote={proposal.userVote}
-              disabled={!walletConnected}
+              disabled={!walletConnected || isVoting}
               onVote={onVote}
             />
-            {proposal.userVote && (
+            {isVoting && (
+              <p role="status" aria-live="polite" className="mt-2 flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Submitting vote…
+              </p>
+            )}
+            {!isVoting && proposal.userVote && (
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 You voted <span className="font-medium capitalize">{proposal.userVote}</span>.
               </p>
@@ -442,6 +453,7 @@ export default function GovernancePage() {
   const qc = useQueryClient()
   const [showForm, setShowForm] = useState(false)
   const [voteError, setVoteError] = useState<string | null>(null)
+  const [tallyRefetching, setTallyRefetching] = useState(false)
 
   const { data: proposals = [], isLoading, error } = useQuery({
     queryKey: ['proposals'],
@@ -450,11 +462,33 @@ export default function GovernancePage() {
 
   const voteMutation = useMutation({
     mutationFn: ({ id, choice }: { id: string; choice: VoteChoice }) => castVote(id, choice),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['proposals'] })
+    // Optimistic update: immediately reflect the user's vote and increment the tally
+    onMutate: async ({ id, choice }) => {
+      await qc.cancelQueries({ queryKey: ['proposals'] })
+      const previous = qc.getQueryData<Proposal[]>(['proposals'])
+      qc.setQueryData<Proposal[]>(['proposals'], (old = []) =>
+        old.map((p) => {
+          if (p.id !== id) return p
+          const newTally = { ...p.tally, [choice]: p.tally[choice] + 1 }
+          return { ...p, tally: newTally, userVote: choice }
+        })
+      )
+      return { previous }
+    },
+    onError: (err: Error, _vars, context) => {
+      // Roll back optimistic update on failure
+      if (context?.previous) {
+        qc.setQueryData(['proposals'], context.previous)
+      }
+      setVoteError(err.message)
+    },
+    onSettled: async () => {
+      // Re-fetch to sync server-authoritative tally
+      setTallyRefetching(true)
+      await qc.invalidateQueries({ queryKey: ['proposals'] })
+      setTallyRefetching(false)
       setVoteError(null)
     },
-    onError: (err: Error) => setVoteError(err.message),
   })
 
   function handleVote(id: string, choice: VoteChoice) {
@@ -468,6 +502,8 @@ export default function GovernancePage() {
 
   const active = proposals.filter((p) => p.status === 'active' && new Date(p.ends_at) > new Date())
   const closed = proposals.filter((p) => p.status !== 'active' || new Date(p.ends_at) <= new Date())
+  // Id of the proposal currently being voted on (for per-card loading state)
+  const votingProposalId = voteMutation.isPending ? voteMutation.variables?.id : undefined
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:py-10">
@@ -514,6 +550,20 @@ export default function GovernancePage() {
         </div>
       )}
 
+      {tallyRefetching && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-4 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300"
+        >
+          <svg className="h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+          </svg>
+          Refreshing vote tallies…
+        </div>
+      )}
+
       {isLoading ? (
         <ProposalListSkeleton count={2} />
       ) : active.length > 0 ? (
@@ -523,7 +573,7 @@ export default function GovernancePage() {
           </h2>
           <div className="space-y-4">
             {active.map((p) => (
-              <ProposalCard key={p.id} proposal={p} onVote={handleVote} walletConnected={connected} />
+              <ProposalCard key={p.id} proposal={p} onVote={handleVote} walletConnected={connected} isVoting={votingProposalId === p.id} />
             ))}
           </div>
         </section>
@@ -536,7 +586,7 @@ export default function GovernancePage() {
           </h2>
           <div className="space-y-4">
             {closed.map((p) => (
-              <ProposalCard key={p.id} proposal={p} onVote={handleVote} walletConnected={connected} />
+              <ProposalCard key={p.id} proposal={p} onVote={handleVote} walletConnected={connected} isVoting={false} />
             ))}
           </div>
         </section>
