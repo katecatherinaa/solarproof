@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Search, CheckCircle, XCircle, Shield, ExternalLink, Copy } from 'lucide-react'
+import { Search, CheckCircle, XCircle, Shield, ExternalLink, Copy, Download } from 'lucide-react'
 import { SectionSkeleton } from '@/components/skeleton'
 import { CopyableText } from '@/components/copy-button'
 import { writeToClipboard } from '@/components/copy-button'
@@ -107,7 +107,38 @@ export default function VerifyPage() {
   const [pageError, setPageError] = useState<Error | null>(null)
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const { pushToast } = useToast()
+
+  async function handleDownloadAudit() {
+    if (!result) return
+    const certId = result.certificate.id
+    setDownloadError(null)
+    try {
+      const res = await fetch(`/api/audit-log/export?certificate_id=${encodeURIComponent(certId)}`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        const msg = body.error ?? 'Export failed. Please try again.'
+        setDownloadError(msg)
+        pushToast({ variant: 'error', title: 'Download failed', description: msg })
+        return
+      }
+      const blob = await res.blob()
+      const today = new Date().toISOString().slice(0, 10)
+      const filename = `solarproof-audit-${certId}-${today}.csv`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      a.click()
+      URL.revokeObjectURL(url)
+      pushToast({ variant: 'success', title: 'Audit trail downloaded', description: filename })
+    } catch {
+      const msg = 'Network error — could not download audit trail.'
+      setDownloadError(msg)
+      pushToast({ variant: 'error', title: 'Download failed', description: msg })
+    }
+  }
 
   async function handleVerify(e: React.FormEvent) {
     e.preventDefault()
@@ -331,6 +362,23 @@ export default function VerifyPage() {
               <Row label="Ed25519 verified" value="✓ Valid" />
             </Section>
           )}
+
+          {/* Download audit trail */}
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={handleDownloadAudit}
+              aria-label={`Download audit trail for certificate ${result.certificate.id} as CSV`}
+              className="inline-flex items-center gap-2 self-start rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              <Download className="h-4 w-4" aria-hidden="true" />
+              Download audit trail
+            </button>
+            {downloadError && (
+              <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+                {downloadError}
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>
