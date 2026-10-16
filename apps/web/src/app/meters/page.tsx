@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import { WalletGate } from '@/components/wallet-gate'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlusCircle, ShieldOff } from 'lucide-react'
+import { TableRowSkeleton } from '@/components/skeleton'
 
 interface Meter {
   id: string
@@ -469,7 +470,10 @@ export default function MetersPage() {
           </p>
         )}
 
-        <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
+        <div
+          className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800"
+          aria-busy={isLoading}
+        >
           <div className="overflow-x-auto">
             <table
               className="min-w-full divide-y divide-gray-200 bg-white text-sm dark:divide-gray-800 dark:bg-gray-900"
@@ -489,13 +493,15 @@ export default function MetersPage() {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              <tbody
+                className="divide-y divide-gray-100 dark:divide-gray-800"
+                aria-busy={isLoading}
+                aria-live="polite"
+              >
                 {isLoading ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-sm text-gray-500">
-                      Loading…
-                    </td>
-                  </tr>
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <TableRowSkeleton key={i} cols={6} />
+                  ))
                 ) : meters && meters.length > 0 ? (
                   meters.map((m) => (
                     <tr
