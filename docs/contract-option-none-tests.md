@@ -1,5 +1,10 @@
 # Contract unit tests for Option/None cases
 
+> **Status: RESOLVED** — All identified Option/None edge cases now have
+> corresponding Cargo tests. See:
+> - `apps/contracts/audit_registry/src/option_none_edge_cases_test.rs`
+> - `apps/contracts/energy_token/src/option_none_edge_cases_test.rs`
+
 This document provides guidance and example unit tests for handling `Option`/`None` cases in the smart contract Rust code.
 
 ## Rationale

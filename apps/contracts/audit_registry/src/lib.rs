@@ -732,3 +732,6 @@ mod tests {
 
 #[cfg(test)]
 mod verify_integration_test;
+
+#[cfg(test)]
+mod option_none_edge_cases_test;

@@ -1447,3 +1447,6 @@ mod overflow_tests;
 
 #[cfg(test)]
 mod storage_cost_tests;
+
+#[cfg(test)]
+mod option_none_edge_cases_test;
