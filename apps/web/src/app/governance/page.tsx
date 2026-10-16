@@ -2,10 +2,14 @@
 // .
 
 import { useState } from 'react'
-import { Vote, Plus, Clock, CheckCircle, XCircle, Minus, ChevronDown, ChevronUp } from 'lucide-react'
+import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import { Vote, Plus, Clock, CheckCircle, XCircle, Minus, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useWallet } from '@/hooks/useWallet'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ProposalListSkeleton } from '@/components/skeleton'
+
+const PAGE_SIZES = [10, 25, 50] as const
+type PageSize = typeof PAGE_SIZES[number]
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -24,12 +28,34 @@ interface Proposal {
   userVote?: VoteChoice
 }
 
+interface ProposalsPage {
+  data: Proposal[]
+  total: number
+  page: number
+  pageSize: number
+  totalPages: number
+}
+
 // ── Fetchers ──────────────────────────────────────────────────────────────────
 
-async function fetchProposals(): Promise<Proposal[]> {
-  const res = await fetch('/api/governance')
+async function fetchProposals(page: number, pageSize: PageSize): Promise<ProposalsPage> {
+  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  const res = await fetch(`/api/governance?${params.toString()}`)
   if (!res.ok) throw new Error('Failed to load proposals')
-  return res.json()
+  const json = await res.json()
+  // Support both paginated (ProposalsPage) and legacy array responses
+  if (Array.isArray(json)) {
+    const start = (page - 1) * pageSize
+    const slice = json.slice(start, start + pageSize)
+    return {
+      data: slice,
+      total: json.length,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(json.length / pageSize)),
+    }
+  }
+  return json as ProposalsPage
 }
 
 async function createProposal(body: {
@@ -440,13 +466,34 @@ function Field({
 export default function GovernancePage() {
   const { connected } = useWallet()
   const qc = useQueryClient()
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [showForm, setShowForm] = useState(false)
   const [voteError, setVoteError] = useState<string | null>(null)
 
-  const { data: proposals = [], isLoading, error } = useQuery({
-    queryKey: ['proposals'],
-    queryFn: fetchProposals,
+  // Pagination state from URL
+  const page = Math.max(1, Number(searchParams.get('page') ?? '1'))
+  const pageSize = (PAGE_SIZES.includes(Number(searchParams.get('page_size') ?? '') as PageSize)
+    ? Number(searchParams.get('page_size'))
+    : 10) as PageSize
+
+  function pushPage(nextPage: number, nextSize?: PageSize) {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('page', String(nextPage))
+    if (nextSize) params.set('page_size', String(nextSize))
+    router.push(`${pathname}?${params.toString()}`)
+  }
+
+  const { data: pageData, isLoading, error } = useQuery({
+    queryKey: ['proposals', page, pageSize],
+    queryFn: () => fetchProposals(page, pageSize),
+    placeholderData: (prev) => prev,
   })
+
+  const proposals = pageData?.data ?? []
+  const total = pageData?.total ?? 0
+  const totalPages = pageData?.totalPages ?? 1
 
   const voteMutation = useMutation({
     mutationFn: ({ id, choice }: { id: string; choice: VoteChoice }) => castVote(id, choice),
@@ -546,6 +593,58 @@ export default function GovernancePage() {
         <p className="py-12 text-center text-sm text-gray-500 dark:text-gray-400">
           No proposals found for your cooperative.
         </p>
+      )}
+
+      {/* ── Pagination Controls ───────────────────────────────────────────── */}
+      {!isLoading && total > 0 && (
+        <nav
+          aria-label="Proposals pagination"
+          className="mt-8 flex flex-wrap items-center justify-between gap-4"
+        >
+          {/* Page size selector */}
+          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+            <label htmlFor="page-size-select" className="text-xs">
+              Per page
+            </label>
+            <select
+              id="page-size-select"
+              value={pageSize}
+              onChange={(e) => pushPage(1, Number(e.target.value) as PageSize)}
+              className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-yellow-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            >
+              {PAGE_SIZES.map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Total count */}
+          <p className="text-xs text-gray-500 dark:text-gray-400" aria-live="polite">
+            {total} proposal{total !== 1 ? 's' : ''} &mdash; page {page} of {totalPages}
+          </p>
+
+          {/* Prev / Next */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => pushPage(page - 1)}
+              disabled={page <= 1}
+              aria-label="Previous page"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              Previous
+            </button>
+            <button
+              onClick={() => pushPage(page + 1)}
+              disabled={page >= totalPages}
+              aria-label="Next page"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              Next
+              <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        </nav>
       )}
     </div>
   )
