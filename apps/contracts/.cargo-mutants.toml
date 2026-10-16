@@ -19,7 +19,9 @@ exclude_re = [
 ]
 
 # Minimum mutation score threshold (0–100). CI fails below this.
-minimum_test_coverage = 70
+# Raised from 70 to 90 (< 10% surviving mutants) for critical modules
+# per issue #97 — reading verification, signature validation, token minting.
+minimum_test_coverage = 90
 
 # Run tests in release mode for speed (Soroban SDK requires it for some features)
 test_workspace = true

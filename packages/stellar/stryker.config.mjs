@@ -7,10 +7,13 @@ const config = {
   },
   mutate: ['src/**/*.ts', '!src/**/*.test.ts'],
   coverageAnalysis: 'perTest',
+  // Thresholds raised from 70/70/80 to 90/90/90 per issue #97.
+  // Goal: < 10% surviving mutants across critical modules
+  // (kwhToStroops, stroopsToKwh, NETWORKS, CONTRACT_IDS).
   thresholds: {
-    high: 80,
-    low: 70,
-    break: 70,
+    high: 90,
+    low: 90,
+    break: 90,
   },
   reporters: ['html', 'clear-text', 'progress', 'json'],
   htmlReporter: {

@@ -11,13 +11,15 @@ Mutation testing verifies that the test suite actually catches bugs, not just th
 
 ## Thresholds
 
-Both tools are configured with a **70% minimum mutation score**. The CI job fails if the score drops below this.
+Critical modules (reading verification, signature validation, token minting)
+are held to a **< 10% surviving mutants** standard (≥ 90 % mutation score).
+The CI job fails if the score drops below this.
 
 | Score | Meaning |
 |---|---|
-| ≥ 80% | High — good test quality |
-| 70–79% | Low — acceptable, investigate survivors |
-| < 70% | Break — CI fails |
+| ≥ 90% | High — required for critical modules |
+| 80–89% | Acceptable — investigate survivors |
+| < 90% | Break — CI fails for critical modules |
 
 ## Running Locally
 

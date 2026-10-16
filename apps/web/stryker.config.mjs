@@ -7,7 +7,10 @@ const config = {
     'src/app/api/verify/route.ts',
     'src/app/api/audit-log/route.ts',
   ],
-  thresholds: { high: 70, low: 50, break: 40 },
+  // Thresholds raised from 70/50/40 to 90/90/90 per issue #97.
+  // Goal: < 10% surviving mutants across critical modules
+  // (verify API route, audit-log route).
+  thresholds: { high: 90, low: 90, break: 90 },
   reporters: ['html', 'progress', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/report.json' },

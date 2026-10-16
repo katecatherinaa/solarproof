@@ -46,6 +46,33 @@ jobs:
             --timeout 120 \
             --jobs 2
 
+      # Enforce < 10% surviving mutants (minimum_test_coverage = 90 in .cargo-mutants.toml).
+      # cargo-mutants exits non-zero when the threshold is not met, which fails CI.
+      - name: Document surviving mutant count per module
+        if: always()
+        working-directory: apps/contracts
+        run: |
+          echo "=== Surviving mutant summary ==="
+          if [ -f mutants-out/outcomes.json ]; then
+            python3 -c "
+          import json, sys
+          data = json.load(open('mutants-out/outcomes.json'))
+          survived = [o for o in data.get('outcomes', []) if o.get('summary') == 'MissedMutant']
+          total = len(data.get('outcomes', []))
+          pct = (len(survived) / total * 100) if total > 0 else 0
+          print(f'Total mutants : {total}')
+          print(f'Surviving     : {len(survived)} ({pct:.1f}%)')
+          print(f'Threshold     : < 10% (90%+ score required)')
+          if pct >= 10:
+              print('FAIL: surviving mutant rate exceeds 10%', file=sys.stderr)
+              sys.exit(1)
+          else:
+              print('PASS: surviving mutant rate is within threshold')
+          "
+          else
+            echo "outcomes.json not found — skipping summary"
+          fi
+
       - name: Upload mutation report
         if: always()
         uses: actions/upload-artifact@v4
@@ -72,14 +99,29 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Run Stryker
+      # Stryker exits non-zero when the break threshold (90) is not met.
+      # The thresholds in packages/stellar/stryker.config.mjs enforce < 10% survivors.
+      - name: Run Stryker (packages/stellar)
         working-directory: packages/stellar
         run: pnpm test:mutation
 
-      - name: Upload Stryker report
+      - name: Upload Stryker report (packages/stellar)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stryker-report
+          name: stryker-report-stellar
           path: packages/stellar/reports/mutation/
+          retention-days: 30
+
+      # Also run Stryker for the web app's critical API routes.
+      - name: Run Stryker (apps/web)
+        working-directory: apps/web
+        run: npx stryker run --concurrency 1
+
+      - name: Upload Stryker report (apps/web)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stryker-report-web
+          path: apps/web/reports/mutation/
           retention-days: 30
