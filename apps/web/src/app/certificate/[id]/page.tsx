@@ -14,6 +14,7 @@ import {
 import { createServiceClient } from '@/lib/supabase'
 import { CertificateChain, type ChainStep } from '@/components/certificate-chain'
 import { CopyableText } from '@/components/copy-button'
+import { TransferHistoryTimeline } from '@/components/transfer-history-timeline'
 
 // ---------------------------------------------------------------------------
 // Data fetching (server-side, no auth required)
@@ -158,6 +159,9 @@ export default async function CertificatePage({
 
       {/* Chain of custody stepper */}
       <CertificateChain steps={steps} />
+
+      {/* Transfer history timeline */}
+      <TransferHistoryTimeline certificateId={id} />
 
       {/* Footer actions */}
       <div className="mt-8 flex flex-wrap gap-3">
