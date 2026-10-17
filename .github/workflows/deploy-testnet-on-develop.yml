@@ -1,0 +1,243 @@
+name: Deploy contracts to testnet on develop push
+
+# Closes #65 — automate contract deployment to testnet on develop push.
+# Triggers whenever contract code is merged into develop. On success it
+# opens a PR that updates docs/deployments.md and .env.staging with the
+# new contract addresses. A failed deployment notifies the team and
+# blocks further pushes via a failing required status check.
+
+on:
+  push:
+    branches: [develop]
+    paths:
+      - 'apps/contracts/**'
+      - '.github/workflows/deploy-testnet-on-develop.yml'
+
+concurrency:
+  group: deploy-testnet-develop
+  cancel-in-progress: false   # never cancel an in-flight deployment
+
+jobs:
+  deploy-testnet:
+    name: Build & deploy to Stellar testnet
+    runs-on: ubuntu-latest
+    environment: testnet
+    permissions:
+      contents: write
+      pull-requests: write
+
+    outputs:
+      energy_token_id:      ${{ steps.deploy-energy.outputs.contract_id }}
+      audit_registry_id:    ${{ steps.deploy-registry.outputs.contract_id }}
+      community_gov_id:     ${{ steps.deploy-governance.outputs.contract_id }}
+      deployed_at:          ${{ steps.timestamp.outputs.ts }}
+      deployer:             ${{ github.actor }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust / Stellar CLI ────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88.0"
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/contracts
+          cache-on-failure: true
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      # ── Build ─────────────────────────────────────────────────────────────
+      - name: Build contracts
+        run: stellar contract build
+        working-directory: apps/contracts
+
+      # ── Fund deployer on testnet ──────────────────────────────────────────
+      - name: Fund deployer account via Friendbot
+        run: |
+          DEPLOYER_PUB=$(stellar keys show \
+            --secret-key "${{ secrets.DEPLOYER_SECRET_KEY }}" 2>/dev/null || true)
+          if [ -z "$DEPLOYER_PUB" ]; then
+            stellar keys generate --network testnet ci-deployer --fund
+            DEPLOYER_PUB=$(stellar keys address ci-deployer)
+          else
+            curl -sf "https://friendbot.stellar.org?addr=${DEPLOYER_PUB}" > /dev/null || true
+          fi
+          echo "DEPLOYER_PUB=${DEPLOYER_PUB}" >> "$GITHUB_ENV"
+
+      # ── Deploy contracts ──────────────────────────────────────────────────
+      - name: Deploy energy_token
+        id: deploy-energy
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/energy_token.wasm \
+            --source "${{ secrets.DEPLOYER_SECRET_KEY }}" \
+            --network testnet 2>&1 | tail -1)
+          echo "contract_id=${ID}" >> "$GITHUB_OUTPUT"
+          echo "ENERGY_TOKEN_ID=${ID}" >> "$GITHUB_ENV"
+        working-directory: apps/contracts
+
+      - name: Deploy audit_registry
+        id: deploy-registry
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/audit_registry.wasm \
+            --source "${{ secrets.DEPLOYER_SECRET_KEY }}" \
+            --network testnet 2>&1 | tail -1)
+          echo "contract_id=${ID}" >> "$GITHUB_OUTPUT"
+          echo "AUDIT_REGISTRY_ID=${ID}" >> "$GITHUB_ENV"
+        working-directory: apps/contracts
+
+      - name: Deploy community_governance
+        id: deploy-governance
+        run: |
+          ID=$(stellar contract deploy \
+            --wasm target/wasm32-unknown-unknown/release/community_governance.wasm \
+            --source "${{ secrets.DEPLOYER_SECRET_KEY }}" \
+            --network testnet 2>&1 | tail -1)
+          echo "contract_id=${ID}" >> "$GITHUB_OUTPUT"
+          echo "COMMUNITY_GOVERNANCE_ID=${ID}" >> "$GITHUB_ENV"
+        working-directory: apps/contracts
+
+      # ── Capture timestamp ─────────────────────────────────────────────────
+      - name: Capture deployment timestamp
+        id: timestamp
+        run: echo "ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      # ── Update deployments.md and .env.staging ────────────────────────────
+      - name: Update docs/deployments.md
+        run: |
+          TS="${{ steps.timestamp.outputs.ts }}"
+          ACTOR="${{ github.actor }}"
+          ET="${{ steps.deploy-energy.outputs.contract_id }}"
+          AR="${{ steps.deploy-registry.outputs.contract_id }}"
+          CG="${{ steps.deploy-governance.outputs.contract_id }}"
+
+          python3 - <<'PYEOF'
+import re, os, sys
+
+ts    = os.environ["TS"]
+actor = os.environ["ACTOR"]
+et    = os.environ["ET"]
+ar    = os.environ["AR"]
+cg    = os.environ["CG"]
+
+path = "docs/deployments.md"
+text = open(path).read()
+
+# Replace the Staging (Testnet) table rows
+replacements = {
+    r"(\| `energy_token` \|)[^\|]*\|[^\|]*\|[^\|]*\|": f"| `energy_token` | `{et}` | {ts} | {actor} |",
+    r"(\| `audit_registry` \|)[^\|]*\|[^\|]*\|[^\|]*\|": f"| `audit_registry` | `{ar}` | {ts} | {actor} |",
+    r"(\| `community_governance` \|)[^\|]*\|[^\|]*\|[^\|]*\|": f"| `community_governance` | `{cg}` | {ts} | {actor} |",
+}
+
+for pattern, repl in replacements.items():
+    text, n = re.subn(pattern, repl, text, count=1)
+    if n == 0:
+        print(f"WARNING: pattern not matched — {pattern}", file=sys.stderr)
+
+open(path, "w").write(text)
+print("docs/deployments.md updated.")
+PYEOF
+        env:
+          TS:    ${{ steps.timestamp.outputs.ts }}
+          ACTOR: ${{ github.actor }}
+          ET:    ${{ steps.deploy-energy.outputs.contract_id }}
+          AR:    ${{ steps.deploy-registry.outputs.contract_id }}
+          CG:    ${{ steps.deploy-governance.outputs.contract_id }}
+
+      - name: Update .env.staging
+        run: |
+          cat > .env.staging <<ENV
+# Auto-generated by deploy-testnet-on-develop workflow — do not edit manually.
+# Last updated: ${{ steps.timestamp.outputs.ts }} by ${{ github.actor }}
+NEXT_PUBLIC_STELLAR_NETWORK=testnet
+NEXT_PUBLIC_STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+NEXT_PUBLIC_ENERGY_TOKEN_ID=${{ steps.deploy-energy.outputs.contract_id }}
+NEXT_PUBLIC_AUDIT_REGISTRY_ID=${{ steps.deploy-registry.outputs.contract_id }}
+NEXT_PUBLIC_COMMUNITY_GOVERNANCE_ID=${{ steps.deploy-governance.outputs.contract_id }}
+ENV
+
+      # ── Open a PR to record the new addresses ─────────────────────────────
+      - name: Create PR to record deployment addresses
+        run: |
+          BRANCH="chore/testnet-deploy-${{ steps.timestamp.outputs.ts }}"
+          BRANCH="${BRANCH//:/-}"   # colons are invalid in branch names
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add docs/deployments.md .env.staging
+          git commit -m "chore(deploy): update testnet contract addresses [${{ steps.timestamp.outputs.ts }}]
+
+Automated by deploy-testnet-on-develop workflow (run ${{ github.run_id }}).
+Commit: ${{ github.sha }}"
+
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base develop \
+            --head "$BRANCH" \
+            --title "chore(deploy): testnet contract addresses — ${{ steps.timestamp.outputs.ts }}" \
+            --body "## Automated testnet deployment
+
+**Workflow run:** [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+**Commit:** \`${{ github.sha }}\`
+**Deployed by:** \`${{ github.actor }}\`
+**Deployed at:** \`${{ steps.timestamp.outputs.ts }}\`
+
+### New contract addresses
+
+| Contract | ID |
+|---|---|
+| \`energy_token\` | \`${{ steps.deploy-energy.outputs.contract_id }}\` |
+| \`audit_registry\` | \`${{ steps.deploy-registry.outputs.contract_id }}\` |
+| \`community_governance\` | \`${{ steps.deploy-governance.outputs.contract_id }}\` |
+
+Files updated: \`docs/deployments.md\`, \`.env.staging\`"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Failure notification ───────────────────────────────────────────────────
+  notify-failure:
+    name: Notify on deployment failure
+    runs-on: ubuntu-latest
+    needs: deploy-testnet
+    if: failure()
+    steps:
+      - name: Post failure summary
+        run: |
+          echo "## ❌ Testnet deployment FAILED" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The \`deploy-testnet-on-develop\` job failed. No deployment record PR was created." >> "$GITHUB_STEP_SUMMARY"
+          echo "Review the failed job logs and re-push to \`develop\` once the issue is resolved." >> "$GITHUB_STEP_SUMMARY"
+
+      # Optionally notify via Slack — set SLACK_WEBHOOK_URL in repo secrets.
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"text\": \"❌ *Testnet deployment failed* on \`${{ github.ref_name }}\`\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Commit\",   \"value\": \"\`${{ github.sha }}\`\",  \"short\": true},
+                  {\"title\": \"Actor\",    \"value\": \"\`${{ github.actor }}\`\", \"short\": true},
+                  {\"title\": \"Run\",      \"value\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"short\": false}
+                ]
+              }]
+            }"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
