@@ -9,6 +9,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+energy-token = { path = "../energy_token" }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+energy-token = { path = "../energy_token" }
