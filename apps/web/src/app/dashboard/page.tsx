@@ -310,7 +310,7 @@ export default function DashboardPage() {
       {/* Main Charts */}
       <section className="mb-8 grid gap-6 lg:grid-cols-2">
         {/* Generation Trend */}
-        <ErrorBoundary inline>
+        <ErrorBoundary inline label="Generation trend">
         <div className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
           <figure aria-labelledby="generation-trend-title" aria-describedby="generation-trend-desc">
             <div className="mb-6 flex items-center justify-between">
@@ -357,7 +357,7 @@ export default function DashboardPage() {
         </ErrorBoundary>
 
         {/* Issuance vs Retirement */}
-        <ErrorBoundary inline>
+        <ErrorBoundary inline label="Certificates activity">
         <div className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-900">
           <figure aria-labelledby="certs-activity-title" aria-describedby="certs-activity-desc">
             <div className="mb-6 flex items-center justify-between">

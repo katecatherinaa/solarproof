@@ -8,6 +8,7 @@ interface Props {
   children: React.ReactNode
   /** Smaller inline fallback for panel-level boundaries */
   inline?: boolean
+  label?: string
 }
 
 interface State {
@@ -38,7 +39,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
         >
           <AlertTriangle className="h-6 w-6 text-red-500" aria-hidden="true" />
           <p className="text-sm font-medium text-red-700 dark:text-red-400">
-            This panel failed to load.
+            {this.props.label ? `${this.props.label} failed to load.` : 'This panel failed to load.'}
           </p>
           <button
             onClick={this.reset}
@@ -56,7 +57,9 @@ export class ErrorBoundary extends React.Component<Props, State> {
         className="flex min-h-[60vh] flex-col items-center justify-center gap-6 px-4 text-center"
       >
         <AlertTriangle className="h-12 w-12 text-red-500" aria-hidden="true" />
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Something went wrong</h2>
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+          {this.props.label ? `${this.props.label} failed to load.` : 'Something went wrong'}
+        </h2>
         <p className="max-w-md text-gray-500 dark:text-gray-400">
           An unexpected error occurred. You can try again or reload the page.
         </p>

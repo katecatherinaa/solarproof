@@ -6,6 +6,7 @@ import { Vote, Plus, Clock, CheckCircle, XCircle, Minus, ChevronDown, ChevronUp 
 import { useWallet } from '@/hooks/useWallet'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ProposalListSkeleton } from '@/components/skeleton'
+import { ErrorBoundary } from '@/components/error-boundary'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -514,6 +515,7 @@ export default function GovernancePage() {
         </div>
       )}
 
+      <ErrorBoundary inline label="Governance proposals">
       {isLoading ? (
         <ProposalListSkeleton count={2} />
       ) : active.length > 0 ? (
@@ -547,6 +549,7 @@ export default function GovernancePage() {
           No proposals found for your cooperative.
         </p>
       )}
+      </ErrorBoundary>
     </div>
   )
 }

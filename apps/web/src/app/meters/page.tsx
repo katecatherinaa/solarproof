@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import { WalletGate } from '@/components/wallet-gate'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlusCircle, ShieldOff } from 'lucide-react'
+import { ErrorBoundary } from '@/components/error-boundary'
 
 interface Meter {
   id: string
@@ -469,6 +470,7 @@ export default function MetersPage() {
           </p>
         )}
 
+        <ErrorBoundary inline label="Meter list">
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
           <div className="overflow-x-auto">
             <table
@@ -566,6 +568,7 @@ export default function MetersPage() {
             </table>
           </div>
         </div>
+        </ErrorBoundary>
 
         {revokeTarget && (
           <RevokeDialog
