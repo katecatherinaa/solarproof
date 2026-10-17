@@ -5,7 +5,13 @@ vi.mock('@/lib/supabase', () => ({
   createServiceClient: vi.fn(),
 }))
 
+vi.mock('@/lib/rate-limit', () => ({
+  checkRateLimit: vi.fn(() => ({ allowed: true, remaining: 99, resetAt: Date.now() + 60_000 })),
+  getClientIp: vi.fn(() => '1.2.3.4'),
+}))
+
 import { createServiceClient } from '@/lib/supabase'
+import { checkRateLimit } from '@/lib/rate-limit'
 import { GET } from '@/app/api/audit-log/export/route'
 
 const CERT_ID = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
@@ -105,5 +111,21 @@ describe('GET /api/audit-log/export', () => {
     }))
     expect(chain.gte).toHaveBeenCalledWith('created_at', '2026-01-01T00:00:00Z')
     expect(chain.lte).toHaveBeenCalledWith('created_at', '2026-01-31T00:00:00Z')
+  })
+
+  it('returns 429 when rate limit is exceeded', async () => {
+    vi.mocked(checkRateLimit).mockReturnValueOnce({ allowed: false, remaining: 0, resetAt: Date.now() + 60_000 })
+    const res = await GET(makeRequest({ certificate_id: CERT_ID }))
+    expect(res.status).toBe(429)
+    const body = await res.json()
+    expect(body.error).toMatch(/too many requests/i)
+  })
+
+  it('includes rate-limit headers on 429', async () => {
+    vi.mocked(checkRateLimit).mockReturnValueOnce({ allowed: false, remaining: 0, resetAt: Date.now() + 60_000 })
+    const res = await GET(makeRequest({ certificate_id: CERT_ID }))
+    expect(res.headers.get('X-RateLimit-Limit')).toBe('100')
+    expect(res.headers.get('X-RateLimit-Remaining')).toBe('0')
+    expect(res.headers.get('Retry-After')).toBeTruthy()
   })
 })

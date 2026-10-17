@@ -1,13 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
+import { checkRateLimit, getClientIp } from '@/lib/rate-limit'
+
+const RATE_LIMIT = 100       // requests
+const RATE_WINDOW = 60_000   // 1 minute in ms
 
 /**
  * GET /api/audit-log/export?certificate_id=<id>[&from=ISO&to=ISO]
  *
  * Public (no-auth) CSV export of audit log entries for a specific certificate.
  * Intended for auditors and certificate buyers on the public verify page.
+ * Rate-limited to 100 req/min per IP.
  */
 export async function GET(req: NextRequest) {
+  const ip = getClientIp(req)
+  const { allowed, remaining, resetAt } = checkRateLimit(`audit-export:${ip}`, RATE_LIMIT, RATE_WINDOW)
+  if (!allowed) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      {
+        status: 429,
+        headers: {
+          'X-RateLimit-Limit': String(RATE_LIMIT),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': String(Math.ceil(resetAt / 1000)),
+          'Retry-After': String(Math.ceil((resetAt - Date.now()) / 1000)),
+        },
+      }
+    )
+  }
+
   const { searchParams } = req.nextUrl
   const certificateId = searchParams.get('certificate_id')
   if (!certificateId) {
