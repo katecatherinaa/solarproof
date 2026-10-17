@@ -732,3 +732,6 @@ mod tests {
 
 #[cfg(test)]
 mod verify_integration_test;
+
+#[cfg(test)]
+mod hash_collision_test;
