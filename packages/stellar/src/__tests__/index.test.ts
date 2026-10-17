@@ -189,9 +189,9 @@ describe('build_mint_tx (buildTransaction with method="mint")', () => {
     expect(tx).toBeTruthy()
   })
 
-  it('encodes fractional kWh correctly (0.1 kWh = 100 token units)', async () => {
+  it('encodes fractional kWh correctly (0.1 kWh = 1_000_000 stroops)', async () => {
     const stroops = kwhToStroops(0.1)
-    expect(stroops).toBe(100n)
+    expect(stroops).toBe(1_000_000n)
   })
 })
 
@@ -283,35 +283,35 @@ describe('bytesToScVal', () => {
 // ---------------------------------------------------------------------------
 
 describe('kwhToStroops', () => {
-  it('converts 1 kWh to 1_000 token units', () => {
-    expect(kwhToStroops(1)).toBe(1_000n)
+  it('converts 1 kWh to 10_000_000 stroops', () => {
+    expect(kwhToStroops(1)).toBe(10_000_000n)
   })
 
-  it('converts 0.1 kWh to 100 token units', () => {
-    expect(kwhToStroops(0.1)).toBe(100n)
+  it('converts 0.1 kWh to 1_000_000 stroops', () => {
+    expect(kwhToStroops(0.1)).toBe(1_000_000n)
   })
 
   it('rounds floating-point imprecision correctly', () => {
     // 0.3 in IEEE 754 is slightly less than 0.3; Math.round prevents truncation.
-    expect(kwhToStroops(0.3)).toBe(300n)
+    expect(kwhToStroops(0.3)).toBe(3_000_000n)
   })
 
   it('converts 0 kWh to 0 token units', () => {
     expect(kwhToStroops(0)).toBe(0n)
   })
 
-  it('converts 12.5 kWh to 12_500 token units', () => {
-    expect(kwhToStroops(12.5)).toBe(12_500n)
+  it('converts 12.5 kWh to 125_000_000 stroops', () => {
+    expect(kwhToStroops(12.5)).toBe(125_000_000n)
   })
 
-  it('converts 0.001 kWh (minimum precision) to 1 token unit', () => {
-    expect(kwhToStroops(0.001)).toBe(1n)
+  it('converts 0.0000001 kWh (minimum precision) to 1 stroop', () => {
+    expect(kwhToStroops(0.0000001)).toBe(1n)
   })
 })
 
 describe('stroopsToKwh', () => {
-  it('converts 1_000 token units to 1 kWh', () => {
-    expect(stroopsToKwh(1_000n)).toBe(1)
+  it('converts 10_000_000 stroops to 1 kWh', () => {
+    expect(stroopsToKwh(10_000_000n)).toBe(1)
   })
 
   it('round-trips kwhToStroops → stroopsToKwh', () => {

@@ -221,6 +221,8 @@ describe('POST /api/readings', () => {
     expect(payload.readingHashHex).toBe(
       computeReadingHash(METER_ID, kwhToStroops(KWH), BigInt(body.timestamp)).toString('hex')
     )
+    expect(payload.kwh).toBe(KWH)
+    expect(kwhToStroops(KWH)).toBe(125_000_000n)
   })
 
   // ── API key validation ─────────────────────────────────────────────────────

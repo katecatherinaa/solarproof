@@ -9,7 +9,7 @@
 ## Overview
 
 `energy_token` is a Soroban fungible token that represents verified renewable
-energy certificates (1 000 token units = 1 kWh).  It implements the complete
+energy certificates (10 000 000 stroops = 1 kWh).  It implements the complete
 SEP-41 interface with one intentional deviation documented below.
 
 ---
@@ -20,7 +20,7 @@ SEP-41 interface with one intentional deviation documented below.
 |---|---|---|---|---|
 | 1 | `name` | `name(e: Env) → String` | ✅ Compliant | Returns `"SolarProof kWh"` |
 | 2 | `symbol` | `symbol(e: Env) → String` | ✅ Compliant | Returns `"SKWH"` |
-| 3 | `decimals` | `decimals(e: Env) → u32` | ✅ Compliant | Returns `3` (milli-kWh precision) |
+| 3 | `decimals` | `decimals(e: Env) → u32` | ✅ Compliant | Returns `7` (stroop precision; 10 000 000 stroops = 1 kWh) |
 | 4 | `balance` | `balance(e: Env, id: Address) → i128` | ✅ Compliant | Returns `0` for unknown accounts |
 | 5 | `transfer` | `transfer(e: Env, from: Address, to: Address, amount: i128)` | ✅ Compliant | Requires `from` auth; emits `transfer` event |
 | 6 | `transfer_from` | `transfer_from(e: Env, spender: Address, from: Address, to: Address, amount: i128)` | ✅ Compliant | Requires `spender` auth; checks allowance |

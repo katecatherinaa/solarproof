@@ -1,7 +1,7 @@
 //! # Energy Token (`energy-token`)
 //!
 //! SEP-41 fungible certificate token representing verified renewable energy.
-//! **1000 token units = 1 kWh** (decimals = 3; 1 unit = 0.001 kWh).
+//! **10_000_000 stroops = 1 kWh** (decimals = 7; 1 stroop = 0.0000001 kWh).
 //! Generation is cryptographically anchored on-chain via the `audit_registry` contract..
 //!
 //! ## Roles
@@ -74,10 +74,10 @@ impl EnergyToken {
         String::from_str(&env, "SKWH")
     }
 
-    /// Returns the number of decimal places: `3` (milli-kWh precision).
-    /// 1 token unit = 0.001 kWh; 1000 units = 1 kWh.
+    /// Returns the number of decimal places: `7` (stroop precision).
+    /// 1 stroop = 0.0000001 kWh; 10_000_000 stroops = 1 kWh.
     pub fn decimals(_env: Env) -> u32 {
-        3
+        7
     }
 
     // ── SEP-41 balance / transfer ────────────────────────────────────────────
@@ -590,7 +590,7 @@ mod tests {
         let (env, client) = setup();
         assert_eq!(client.name(), String::from_str(&env, "SolarProof kWh"));
         assert_eq!(client.symbol(), String::from_str(&env, "SKWH"));
-        assert_eq!(client.decimals(), 3);
+        assert_eq!(client.decimals(), 7);
     }
 
     #[test]
@@ -1104,7 +1104,18 @@ mod tests {
         let (env, client) = setup();
         assert_eq!(client.name(), String::from_str(&env, "SolarProof kWh"));
         assert_eq!(client.symbol(), String::from_str(&env, "SKWH"));
-        assert_eq!(client.decimals(), 3_u32);
+        assert_eq!(client.decimals(), 7_u32);
+    }
+
+    #[test]
+    fn test_one_kwh_is_ten_million_stroops() {
+        let (env, client) = setup();
+        let holder = Address::generate(&env);
+        let one_kwh = 10_000_000_i128;
+
+        client.mint(&holder, &one_kwh);
+
+        assert_eq!(client.balance(&holder), one_kwh);
     }
 
     #[test]
@@ -1367,21 +1378,21 @@ mod tests {
         // Step 2 — SEP-41 metadata queries (name, symbol, decimals)
         assert_eq!(client.name(), String::from_str(&env, "SolarProof kWh"));
         assert_eq!(client.symbol(), String::from_str(&env, "SKWH"));
-        assert_eq!(client.decimals(), 3_u32);
+        assert_eq!(client.decimals(), 7_u32);
 
-        // Step 3 — Mint 10 kWh (10_000 units at decimals=3) to holder
-        let mint_amount: i128 = 10_000;
+        // Step 3 — Mint 10 kWh (100_000_000 stroops) to holder
+        let mint_amount: i128 = 100_000_000;
         client.mint(&holder, &mint_amount);
         assert_eq!(client.balance(&holder), mint_amount);
         assert_eq!(client.total_supply(), mint_amount);
 
-        // Step 4 — Approve spender for 3 kWh (3_000 units)
-        let allowance_amount: i128 = 3_000;
+        // Step 4 — Approve spender for 3 kWh (30_000_000 stroops)
+        let allowance_amount: i128 = 30_000_000;
         client.approve(&holder, &spender, &allowance_amount, &9999_u32);
         assert_eq!(client.allowance(&holder, &spender), allowance_amount);
 
         // Step 5 — transfer_from: spender moves 2 kWh to recipient
-        let transfer_amount: i128 = 2_000;
+        let transfer_amount: i128 = 20_000_000;
         client.transfer_from(&spender, &holder, &recipient, &transfer_amount);
         assert_eq!(client.balance(&holder), mint_amount - transfer_amount);
         assert_eq!(client.balance(&recipient), transfer_amount);
@@ -1391,8 +1402,8 @@ mod tests {
         );
 
         // Step 6 — Direct transfer: recipient sends 1 kWh back to holder
-        client.transfer(&recipient, &holder, &1_000_i128);
-        assert_eq!(client.balance(&recipient), 1_000_i128);
+        client.transfer(&recipient, &holder, &10_000_000_i128);
+        assert_eq!(client.balance(&recipient), 10_000_000_i128);
         assert_eq!(client.balance(&holder), mint_amount - transfer_amount + 1_000);
 
         // Step 7 — burn: holder burns 1 kWh directly

@@ -8,6 +8,17 @@ Minting requires a valid audit anchor in `audit_registry` for the same reading h
 - **Decimals:** `7` (amounts in stroops: 1 kWh = `10_000_000`)
 - **SDK:** Soroban SDK 23.1.0 / OpenZeppelin Stellar v0.5.1
 
+## Precision
+
+One token represents one kilowatt-hour. SEP-41 stores amounts as integers with
+seven decimal places, so one stroop represents `0.0000001 kWh`.
+
+| Energy | On-chain amount (stroops) |
+|---:|---:|
+| 1 kWh | `10_000_000` |
+| 0.1 kWh | `1_000_000` |
+| 0.0000001 kWh | `1` |
+
 ---
 
 ## Functions

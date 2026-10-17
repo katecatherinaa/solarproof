@@ -133,27 +133,27 @@ export function bytesToScVal(bytes: Uint8Array): xdr.ScVal {
 }
 
 /**
- * Convert kilowatt-hours to token units (milli-kWh).
+ * Convert kilowatt-hours to token units (stroops).
  *
- * SolarProof uses a fixed scale of 1 kWh = 10^3 token units, matching the
- * SEP-41 `decimals = 3` setting. This allows fractional kWh values down to
- * 0.001 kWh to be represented as integers on-chain.
+ * SolarProof uses a fixed scale of 1 kWh = 10^7 stroops, matching the
+ * SEP-41 `decimals = 7` setting. This allows fractional kWh values down to
+ * 0.0000001 kWh to be represented as integers on-chain.
  *
  * `Math.round` is applied before converting to `bigint` to avoid floating-
  * point truncation errors (e.g. 0.1 kWh → 99 instead of 100).
  *
  * @param kwh - Energy amount in kilowatt-hours (may be fractional).
- * @returns Equivalent amount in milli-kWh token units as a `bigint`.
+ * @returns Equivalent amount in stroops as a `bigint`.
  */
-export const kwhToStroops = (kwh: number): bigint => BigInt(Math.round(kwh * 1e3))
+export const kwhToStroops = (kwh: number): bigint => BigInt(Math.round(kwh * 1e7))
 
 /**
- * Convert token units (milli-kWh) back to kilowatt-hours.
+ * Convert stroops back to kilowatt-hours.
  *
- * @param stroops - Amount in milli-kWh token units as a `bigint`.
+ * @param stroops - Amount in stroops as a `bigint`.
  * @returns Energy amount in kilowatt-hours.
  */
-export const stroopsToKwh = (stroops: bigint): number => Number(stroops) / 1e3
+export const stroopsToKwh = (stroops: bigint): number => Number(stroops) / 1e7
 
 /** Build a stellar.expert deep link for a transaction or contract address. */
 export function stellarExplorerUrl(
