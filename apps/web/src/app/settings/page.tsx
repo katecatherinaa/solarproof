@@ -61,7 +61,7 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        {/* Theme Settings */}
+        {/* Theme Settings - Issue #22: Dark mode toggle with localStorage persistence */}
         <section className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-800 dark:bg-gray-950">
           <div className="flex items-center justify-between gap-4">
             <div>
