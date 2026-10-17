@@ -216,6 +216,20 @@ env.events().publish(("registry:anchor",), AnchorEvent { /* ... */ });  // ✅ N
 
 ## Testing Event Schema Stability
 
+### Enforcement Status
+
+This guide describes the compatibility policy; it is not itself an automated
+schema lock. Existing contract tests cover selected event emissions, but the
+repository does not yet enforce a versioned schema snapshot for every emitted
+event or verify all schemas against the off-chain indexer. Issue #54 tracks
+that implementation work.
+
+Before treating this policy as enforced, add contract tests that inspect the
+actual emitted topic and serialized data (not only event structs or decoded
+values), maintain a versioned schema manifest, and verify its compatibility
+with the indexer. Any approved schema change must update the manifest and add a
+changelog entry in the same change.
+
 ### 1. Unit Tests for Event Emissions
 
 Verify events are emitted with the correct structure and values.
