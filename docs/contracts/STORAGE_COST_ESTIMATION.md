@@ -455,3 +455,43 @@ migrate         1 inst RW
 ---
 
 *Generated for SolarProof issue #564 · Soroban SDK 23.1.0 · Protocol 22*
+
+---
+
+## 8. Automated Storage Regression Tests (issue #59)
+
+To prevent silent size regressions, a dedicated test crate lives at
+`apps/contracts/storage_regression/`.  It asserts that every storage entry
+stays within the budgets defined below (baseline + 10 % tolerance).
+
+### Budget table
+
+| Contract         | Entry                      | Baseline (B) | Budget (+10%) |
+|------------------|----------------------------|-------------|--------------|
+| `audit_registry` | Instance blob (initialize) | 180         | 198          |
+| `audit_registry` | Bucket (1 entry)           | 104         | 115          |
+| `audit_registry` | Bucket (10 entries)        | 464         | 510          |
+| `audit_registry` | Per-entry growth           | 40 B/entry  | 50 B/entry   |
+| `energy_token`   | Instance blob (initialize) | 225         | 248          |
+| `energy_token`   | Balance entry (proxy)      | 52          | 58           |
+
+### Updating budgets
+
+If a deliberate storage layout change causes a test to fail:
+
+1. Measure the new size locally:
+   ```bash
+   cargo test --manifest-path apps/contracts/storage_regression/Cargo.toml -- --nocapture 2>&1 | grep STORAGE
+   ```
+2. Update the constant in `apps/contracts/storage_regression/src/lib.rs`.
+3. Update the budget table above.
+4. Add a comment in the PR explaining why the size increased.
+
+### Running locally
+
+```bash
+cargo test --manifest-path apps/contracts/storage_regression/Cargo.toml
+```
+
+The CI step `storage-regression` in `.github/workflows/contracts-ci.yml` runs
+this automatically on every pull request touching `apps/contracts/`.

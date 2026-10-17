@@ -49,3 +49,24 @@ jobs:
 
       - name: Verify contract snapshots are unchanged
         run: bash scripts/check-contract-snapshots.sh
+
+  storage-regression:
+    name: Storage size regression tests (issue #59)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/contracts/storage_regression
+
+      - name: Run storage regression tests
+        run: cargo test --manifest-path apps/contracts/storage_regression/Cargo.toml
+        working-directory: apps/contracts
