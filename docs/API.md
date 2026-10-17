@@ -126,6 +126,58 @@ GET /api/verify?id=a1b2c3d4-e5f6-7890-abcd-ef1234567890
 
 ---
 
+### POST /api/webhooks
+
+Register a webhook endpoint that receives event notifications (anchor, mint, retire, etc.).
+
+> **Signature verification (issue #29)**
+> When the `WEBHOOK_SECRET` environment variable is set, every incoming `POST /api/webhooks`
+> request **must** include an `X-SolarProof-Signature` header containing the
+> HMAC-SHA256 hex digest of the raw request body, computed with `WEBHOOK_SECRET` as the key.
+> Requests with a missing or invalid signature are rejected with **HTTP 401**.
+> The comparison uses constant-time equality (`timingSafeEqual`) to prevent timing attacks.
+
+**Computing the signature (sender side)**
+
+```js
+import { createHmac } from 'crypto'
+const sig = createHmac('sha256', WEBHOOK_SECRET).update(rawBody).digest('hex')
+// Include as: X-SolarProof-Signature: <sig>
+```
+
+**Request headers**
+
+| Header | Required | Description |
+|---|---|---|
+| `X-SolarProof-Signature` | ✅ (when `WEBHOOK_SECRET` is set) | HMAC-SHA256 hex digest of raw body |
+| `Content-Type` | ✅ | `application/json` |
+
+**Request body**
+
+| Field | Type | Description |
+|---|---|---|
+| `cooperative_id` | `string` (UUID) | Cooperative to subscribe |
+| `url` | `string` (URL) | Endpoint that will receive webhook events |
+| `secret` | `string` (≥16 chars) | Shared secret for outgoing webhook signatures |
+| `events` | `string[]` | One or more of: `anchor`, `mint`, `retire`, `mint_failed`, `certificate.minted`, `certificate.transferred`, `certificate.retired` |
+
+**Responses**
+
+| Status | Meaning |
+|---|---|
+| `201 Created` | Webhook registered successfully |
+| `400 Bad Request` | Validation failed |
+| `401 Unauthorized` | Missing or invalid `X-SolarProof-Signature` |
+| `500 Internal Server Error` | Database write failed |
+
+---
+
+### GET /api/webhooks?cooperative_id=UUID
+
+List registered webhook endpoints for a cooperative.
+
+---
+
 ### GET /api/ws/readings
 
 **Not implemented.** This route currently responds with `501 Not Implemented` JSON; it does not accept WebSocket upgrades or publish events. Real-time certificate alerts require a WebSocket-capable event service or an authorized Supabase Realtime subscription before the frontend can receive issuance, failure, and retirement notifications. The event source and payload contract must be defined before a client integration can be implemented. See [issue #11](https://github.com/katecatherinaa/solarproof/issues/11).

@@ -18,6 +18,7 @@ export const env = createEnv({
     AWS_REGION: z.string().default('us-east-1'),
     READINGS_RATE_LIMIT_PER_MINUTE: z.string().optional(),
     READINGS_RATE_LIMIT_WINDOW_SECONDS: z.string().optional(),
+    WEBHOOK_SECRET: z.string().min(16).optional(),
   },
   client: {
     NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
@@ -45,5 +46,6 @@ export const env = createEnv({
     NEXT_PUBLIC_COMMUNITY_GOVERNANCE_ID: process.env.NEXT_PUBLIC_COMMUNITY_GOVERNANCE_ID,
     READINGS_RATE_LIMIT_PER_MINUTE: process.env.READINGS_RATE_LIMIT_PER_MINUTE,
     READINGS_RATE_LIMIT_WINDOW_SECONDS: process.env.READINGS_RATE_LIMIT_WINDOW_SECONDS,
+    WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
   },
 })
