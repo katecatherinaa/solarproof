@@ -1,16 +1,37 @@
 name: Blue-Green Deploy
 
+# Closes #63 — smoke test gate before traffic cut-over.
+# smoke-test.mjs runs against the green (preview) slot after deployment;
+# the promote step only executes if the smoke test exits 0.
+# A failed smoke test sends a Slack/email notification and aborts the workflow.
+
 on:
   push:
     branches: [main]
 
 jobs:
   deploy:
-    name: Deploy → health check → promote
+    name: Deploy → smoke test → promote
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
 
+      # ── Node / pnpm (required by smoke-test.mjs) ─────────────────────────
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # ── Deploy to Vercel preview (green slot) ─────────────────────────────
       - name: Deploy to Vercel preview (green)
         id: deploy
         run: |
@@ -22,6 +43,7 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
+      # ── Health checks against green ───────────────────────────────────────
       - name: Health checks against green
         run: |
           URL="${{ steps.deploy.outputs.preview_url }}/api/health"
@@ -36,6 +58,21 @@ jobs:
             sleep 10
           done
 
+      # ── Smoke test against green slot (gate before cut-over) ─────────────
+      # Traffic is NOT cut over if this step fails (exit non-zero).
+      - name: Run smoke test against green slot
+        id: smoke
+        run: node scripts/smoke-test.mjs
+        env:
+          SMOKE_NETWORK:                testnet
+          ENERGY_TOKEN_ID:              ${{ secrets.ENERGY_TOKEN_ID }}
+          AUDIT_REGISTRY_ID:            ${{ secrets.AUDIT_REGISTRY_ID }}
+          SMOKE_METER_SECRET_KEY:       ${{ secrets.SMOKE_METER_SECRET_KEY }}
+          SMOKE_TOKEN_MINTER_SECRET_KEY: ${{ secrets.SMOKE_TOKEN_MINTER_SECRET_KEY }}
+          # Point the smoke test at the green preview URL
+          NEXT_PUBLIC_STELLAR_RPC_URL:  ${{ steps.deploy.outputs.preview_url }}
+
+      # ── Promote green → production (only if smoke test passed) ───────────
       - name: Promote green to production
         run: |
           npx vercel promote ${{ steps.deploy.outputs.preview_url }} \
@@ -48,3 +85,40 @@ jobs:
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
             "https://solarproof.vercel.app/api/health")
           [ "$STATUS" = "200" ] || (echo "Production health check failed" && exit 1)
+
+  # ── Failure notification (smoke test or deploy failure) ─────────────────────
+  notify-failure:
+    name: Notify on smoke-test / deploy failure
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: failure()
+    steps:
+      - name: Post failure summary
+        run: |
+          echo "## ❌ Blue-green deployment FAILED" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Workflow run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Production traffic was **not** cut over. The green slot remains live as a preview." >> "$GITHUB_STEP_SUMMARY"
+          echo "See the [blue-green runbook](../docs/runbook/blue-green-deployment.md) for rollback steps." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"text\": \"❌ *Blue-green smoke test FAILED* — production cut-over aborted\",
+              \"attachments\": [{
+                \"color\": \"danger\",
+                \"fields\": [
+                  {\"title\": \"Commit\",   \"value\": \"\`${{ github.sha }}\`\",  \"short\": true},
+                  {\"title\": \"Actor\",    \"value\": \"\`${{ github.actor }}\`\", \"short\": true},
+                  {\"title\": \"Run\",      \"value\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"short\": false},
+                  {\"title\": \"Runbook\",  \"value\": \"docs/runbook/blue-green-deployment.md\", \"short\": false}
+                ]
+              }]
+            }"
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
