@@ -1,0 +1,30 @@
+name: cargo-deny
+
+# Run on every PR that touches Rust code or dependencies (including Dependabot PRs).
+# Closes #66 — cargo-deny check on Dependabot Cargo update PRs.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/contracts/**'
+      - '.github/workflows/cargo-deny.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'apps/contracts/**'
+      - '.github/workflows/cargo-deny.yml'
+
+jobs:
+  cargo-deny:
+    name: cargo-deny (advisories · licenses · bans · sources)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: apps/contracts/Cargo.toml
+          # Check all four categories; each can be tuned in deny.toml
+          command: check advisories licenses bans sources
