@@ -6,6 +6,7 @@ import { anchorReading, mintCertificates } from '@/lib/stellar'
 import { computeReadingHash } from '@/lib/crypto'
 import { kwhToStroops } from '@solarproof/stellar'
 import { invalidateCert } from '@/lib/cache'
+import { getIdempotentResponse, storeIdempotentResponse } from '@/lib/idempotency'
 
 const ReadingSchema = z.object({
   meter_id: z.string().uuid(),
@@ -37,9 +38,21 @@ type ReadingResult =
  * Accepts up to 100 signed meter readings. Each is validated, anchored,
  * and minted independently. Returns per-reading status.
  *
+ * Supports idempotency via the `Idempotency-Key` header. Duplicate requests
+ * with the same key return the cached response without re-processing.
+ *
  * Body: Array of { meter_id, kwh, timestamp, signature_hex }
  */
 export async function POST(req: NextRequest) {
+  // --- Idempotency check ---
+  const idempotencyKey = req.headers.get('Idempotency-Key')
+  if (idempotencyKey) {
+    const cached = await getIdempotentResponse(idempotencyKey)
+    if (cached) {
+      return NextResponse.json(cached.body, { status: cached.status })
+    }
+  }
+
   const body = await req.json().catch(() => null)
   const parsed = BatchSchema.safeParse(body)
   if (!parsed.success) {
@@ -136,5 +149,11 @@ type MeterRow = { id: string; pubkey_hex: string; cooperative_id: string; cooper
   const failed = results.length - succeeded
   const httpStatus = succeeded === 0 ? 400 : 207
 
-  return NextResponse.json({ succeeded, failed, results }, { status: httpStatus })
+  const responseBody = { succeeded, failed, results }
+
+  if (idempotencyKey) {
+    await storeIdempotentResponse(idempotencyKey, { body: responseBody, status: httpStatus })
+  }
+
+  return NextResponse.json(responseBody, { status: httpStatus })
 }
