@@ -46,19 +46,44 @@ function configuredLevel(): Level {
 const REDACT_PATTERN = /key|secret|token|password|sig|hex|private/i
 
 /**
+ * Truncate a hex string to its first 8 characters, appending an ellipsis.
+ * Non-string values are coerced to string first.
+ */
+function truncateHex(value: unknown): string {
+  const str = typeof value === 'string' ? value : String(value)
+  return str.length > 8 ? `${str.slice(0, 8)}…` : str
+}
+
+/**
  * Recursively redact sensitive values from an object before logging.
- * Any key matching REDACT_PATTERN has its value replaced with "[REDACTED]".
+ *
+ * Special-cased fields (checked before the generic REDACT_PATTERN):
+ *   - `pubkey_hex`    → truncated to first 8 chars (e.g. `abc12345…`)
+ *   - `signature_hex` → replaced with "[REDACTED]"
+ *
+ * Any other key matching REDACT_PATTERN has its value replaced with "[REDACTED]".
+ * Arrays and nested objects are redacted recursively.
  *
  * @example
- *   redact({ meter_id, signature_hex, kwh })
- *   // → { meter_id, signature_hex: '[REDACTED]', kwh }
+ *   redact({ meter_id, signature_hex, pubkey_hex, kwh })
+ *   // → { meter_id, signature_hex: '[REDACTED]', pubkey_hex: 'abc12345…', kwh }
  */
 export function redact(obj: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(obj)) {
-    if (REDACT_PATTERN.test(k)) {
+    if (k === 'pubkey_hex') {
+      out[k] = truncateHex(v)
+    } else if (k === 'signature_hex') {
       out[k] = '[REDACTED]'
-    } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+    } else if (REDACT_PATTERN.test(k)) {
+      out[k] = '[REDACTED]'
+    } else if (Array.isArray(v)) {
+      out[k] = v.map((item) =>
+        item !== null && typeof item === 'object'
+          ? redact(item as Record<string, unknown>)
+          : item,
+      )
+    } else if (v !== null && typeof v === 'object') {
       out[k] = redact(v as Record<string, unknown>)
     } else {
       out[k] = v
@@ -103,6 +128,9 @@ function log(
 ) {
   if (LEVELS[level] < LEVELS[configuredLevel()]) return
 
+  // Centralized redaction — applied here so call sites cannot leak sensitive fields.
+  const safeMeta = redact(meta)
+
   const entry: LogEntry = {
     level,
     event,
@@ -110,7 +138,7 @@ function log(
     ...(correlationId ? { correlationId } : {}),
     ...(route ? { route } : {}),
     ...(method ? { method } : {}),
-    ...meta,
+    ...safeMeta,
   }
   // Always write to stdout (captured by Vercel function logs too)
   console[level === 'debug' ? 'log' : level](JSON.stringify(entry))
@@ -122,7 +150,7 @@ function log(
       category: 'log',
       message: event,
       level: level === 'warn' ? 'warning' : level,
-      data: { correlationId, route, method, ...meta },
+      data: { correlationId, route, method, ...safeMeta },
     })
   }
 }

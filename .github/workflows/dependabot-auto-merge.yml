@@ -1,6 +1,10 @@
 name: Dependabot auto-merge
 
-on: pull_request
+on:
+  pull_request:
+  schedule:
+    # Re-check high severity security PRs after the 24h waiting window
+    - cron: '0 * * * *'
 
 permissions:
   contents: write
@@ -9,15 +13,169 @@ permissions:
 jobs:
   auto-merge:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    if: github.event_name == 'pull_request' && github.actor == 'dependabot[bot]'
     steps:
       - name: Fetch Dependabot metadata
         id: meta
         uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Auto-merge patch updates
-        if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+      - name: Determine security update
+        id: security
+        run: |
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          GHSA_ID='${{ steps.meta.outputs.ghsa-id }}'
+          ALERT_STATE='${{ steps.meta.outputs.alert-state }}'
+          IS_SECURITY=false
+          if echo "$LABELS" | grep -q 'security-advisory'; then
+            IS_SECURITY=true
+          elif [ -n "$GHSA_ID" ]; then
+            IS_SECURITY=true
+          fi
+          echo "is_security=$IS_SECURITY" >> "$GITHUB_OUTPUT"
+          echo "ghsa_id=$GHSA_ID" >> "$GITHUB_OUTPUT"
+          echo "alert_state=$ALERT_STATE" >> "$GITHUB_OUTPUT"
+
+      - name: Determine severity
+        id: severity
+        if: steps.security.outputs.is_security == 'true'
+        run: |
+          CVSS='${{ steps.meta.outputs.cvss }}'
+          # cvss output is a JSON array of {score, vector_string}; take the max score
+          SCORE=$(echo "$CVSS" | jq -r 'if type == "array" and length > 0 then (map(.score) | max) else 0 end' 2>/dev/null || echo 0)
+          if [ -z "$SCORE" ] || [ "$SCORE" = "null" ]; then
+            SCORE=0
+          fi
+          if awk "BEGIN {exit !($SCORE >= 9.0)}"; then
+            SEVERITY=critical
+          elif awk "BEGIN {exit !($SCORE >= 7.0)}"; then
+            SEVERITY=high
+          elif awk "BEGIN {exit !($SCORE >= 4.0)}"; then
+            SEVERITY=medium
+          else
+            SEVERITY=low
+          fi
+          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+          echo "severity=$SEVERITY" >> "$GITHUB_OUTPUT"
+
+      - name: Auto-merge critical security updates immediately
+        if: steps.security.outputs.is_security == 'true' && steps.severity.outputs.severity == 'critical'
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Defer high severity security updates (24h window)
+        if: steps.security.outputs.is_security == 'true' && steps.severity.outputs.severity == 'high'
+        run: |
+          echo "High severity security update detected (CVSS ${{ steps.severity.outputs.score }})."
+          echo "Auto-merge will be enabled by the scheduled re-check job after the 24h window."
+
+      - name: Auto-merge patch updates (non-security)
+        if: steps.security.outputs.is_security != 'true' && steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  high-severity-recheck:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    steps:
+      - name: Enable auto-merge for high severity security PRs older than 24h
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NOW=$(date -u +%s)
+          gh pr list --repo "$REPO" --author 'app/dependabot' --state open \
+            --json number,url,labels,createdAt,isDraft \
+            --jq '.[] | select(.isDraft == false) | select([.labels[].name] | index("security-advisory")) | "\(.number)\t\(.url)\t\(.createdAt)"' |
+          while IFS=$'\t' read -r NUMBER URL CREATED_AT; do
+            [ -z "$NUMBER" ] && continue
+            CREATED=$(date -u -d "$CREATED_AT" +%s)
+            AGE=$(( NOW - CREATED ))
+            if [ "$AGE" -lt 86400 ]; then
+              echo "PR #$NUMBER is only ${AGE}s old; skipping (needs 24h)."
+              continue
+            fi
+            echo "Enabling auto-merge for high severity PR #$NUMBER ($URL)."
+            gh pr merge --auto --squash "$URL" || echo "Failed to enable auto-merge for #$NUMBER"
+          done
+
+  log-merge:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' && github.event.pull_request.merged == true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Append merge record to CHANGELOG
+        run: |
+          set -euo pipefail
+          LABELS='${{ toJSON(github.event.pull_request.labels.*.name) }}'
+          GHSA_ID='${{ steps.meta.outputs.ghsa-id }}'
+          IS_SECURITY=false
+          if echo "$LABELS" | grep -q 'security-advisory'; then
+            IS_SECURITY=true
+          elif [ -n "$GHSA_ID" ]; then
+            IS_SECURITY=true
+          fi
+          if [ "$IS_SECURITY" != 'true' ]; then
+            echo "Not a security update; skipping CHANGELOG entry."
+            exit 0
+          fi
+
+          CVSS='${{ steps.meta.outputs.cvss }}'
+          SCORE=$(echo "$CVSS" | jq -r 'if type == "array" and length > 0 then (map(.score) | max) else 0 end' 2>/dev/null || echo 0)
+          if [ -z "$SCORE" ] || [ "$SCORE" = "null" ]; then SCORE=0; fi
+          if awk "BEGIN {exit !($SCORE >= 9.0)}"; then
+            SEVERITY=critical
+          elif awk "BEGIN {exit !($SCORE >= 7.0)}"; then
+            SEVERITY=high
+          elif awk "BEGIN {exit !($SCORE >= 4.0)}"; then
+            SEVERITY=medium
+          else
+            SEVERITY=low
+          fi
+
+          PACKAGE='${{ steps.meta.outputs.dependency-names }}'
+          ADVISORY="${GHSA_ID:-security-advisory}"
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          PR_NUMBER='${{ github.event.pull_request.number }}'
+          PR_URL='${{ github.event.pull_request.html_url }}'
+
+          ENTRY="- ${TIMESTAMP}: Auto-merged security update for \`${PACKAGE}\` (advisory: ${ADVISORY}, severity: ${SEVERITY}, CVSS: ${SCORE}) via [#${PR_NUMBER}](${PR_URL})."
+
+          if [ ! -f CHANGELOG.md ]; then
+            printf '# Changelog\n\n## Security\n\n' > CHANGELOG.md
+          fi
+          if ! grep -q '^## Security' CHANGELOG.md; then
+            printf '\n## Security\n\n' >> CHANGELOG.md
+          fi
+          # Insert the entry directly after the "## Security" heading
+          awk -v entry="$ENTRY" '
+            { print }
+            /^## Security$/ && !done { print ""; print entry; done=1 }
+          ' CHANGELOG.md > CHANGELOG.md.tmp && mv CHANGELOG.md.tmp CHANGELOG.md
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "No CHANGELOG changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(changelog): record auto-merged security update ${ADVISORY} (#${PR_NUMBER})"
+          git push

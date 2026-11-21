@@ -18,13 +18,38 @@ function isCsrfExempt(pathname: string): boolean {
   return CSRF_EXEMPT_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))
 }
 
+/** Methods that carry a request body and must declare a JSON Content-Type. */
+const JSON_BODY_METHODS = ['POST', 'PUT', 'PATCH']
+
+/**
+ * Returns true when the request's Content-Type is acceptable for a JSON endpoint.
+ * Accepts `application/json` with optional parameters (e.g. `; charset=utf-8`).
+ * Multipart requests (file uploads) are always allowed through.
+ */
+function hasAcceptableContentType(req: NextRequest): boolean {
+  const contentType = req.headers.get('content-type')
+  if (!contentType) return false
+
+  const mediaType = contentType.split(';')[0].trim().toLowerCase()
+  if (mediaType === 'multipart/form-data') return true
+  return mediaType === 'application/json'
+}
+
 /**
  * Middleware that:
  * 1. Enforces CORS policy — restricts origins to CORS_ALLOWED_ORIGINS + localhost in dev.
  * 2. Handles OPTIONS preflight requests.
  * 3. Enforces CSRF token validation on all non-GET browser-facing API routes.
- * 4. Injects a correlation ID into every API request.
- * 5. Redirects unversioned /api/* routes to /api/v1/* with a deprecation header.
+ * 4. Rejects POST/PUT/PATCH /api/** requests without a JSON Content-Type (415).
+ * 5. Injects a correlation ID into every API request.
+ * 6. Redirects unversioned /api/* routes to /api/v1/* with a deprecation header.
+ *
+ * Content-Type enforcement:
+ *   - POST/PUT/PATCH requests to /api/** must send `Content-Type: application/json`
+ *     (parameters such as `; charset=utf-8` are allowed).
+ *   - `multipart/form-data` requests (file uploads) are passed through.
+ *   - GET/HEAD/OPTIONS/DELETE requests are unaffected.
+ *   - Missing or incorrect Content-Type returns HTTP 415 Unsupported Media Type.
  *
  * CSRF enforcement (double-submit cookie pattern):
  *   - All POST/PUT/PATCH/DELETE /api/** routes require a valid X-CSRF-Token header
@@ -67,6 +92,31 @@ export function middleware(req: NextRequest) {
     }
     // Origin not allowed — return 403
     return new NextResponse(null, { status: 403 })
+  }
+
+  // ── Content-Type validation ──────────────────────────────────────────────
+  // Reject state-mutating API requests that do not declare a JSON body.
+  // This blocks CSRF via HTML form submission (which sends
+  // application/x-www-form-urlencoded or multipart/form-data) when CSRF
+  // protections have gaps. Multipart uploads and GET/HEAD/OPTIONS/DELETE
+  // requests are unaffected.
+  if (
+    pathname.startsWith('/api/') &&
+    JSON_BODY_METHODS.includes(req.method) &&
+    !hasAcceptableContentType(req)
+  ) {
+    const corr = req.headers.get('x-correlation-id') ?? crypto.randomUUID()
+    const unsupported = NextResponse.json(
+      { error: 'Unsupported Media Type', message: 'Content-Type must be application/json' },
+      { status: 415 },
+    )
+    unsupported.headers.set('x-correlation-id', corr)
+    if (corsHeaders) {
+      for (const [k, v] of Object.entries(corsHeaders)) {
+        unsupported.headers.set(k, v)
+      }
+    }
+    return unsupported
   }
 
   // ── CSRF enforcement ─────────────────────────────────────────────────────

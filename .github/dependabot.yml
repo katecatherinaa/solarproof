@@ -9,13 +9,21 @@ updates:
       day: monday
     open-pull-requests-limit: 10
     groups:
+      # Security advisories are kept out of the regular groups so the
+      # auto-merge workflow can target them via the security-advisory label.
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
       patch-updates:
+        applies-to: version-updates
         update-types: [patch]
       minor-updates:
+        applies-to: version-updates
         update-types: [minor]
     labels:
       - dependencies
       - javascript
+      - security-advisory
     ignore:
       # Flag major version bumps for manual review
       - dependency-name: "*"
@@ -30,13 +38,21 @@ updates:
       day: monday
     open-pull-requests-limit: 10
     groups:
+      # Security advisories are kept out of the regular groups so the
+      # auto-merge workflow can target them via the security-advisory label.
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
       patch-updates:
+        applies-to: version-updates
         update-types: [patch]
       minor-updates:
+        applies-to: version-updates
         update-types: [minor]
     labels:
       - dependencies
       - rust
+      - security-advisory
     ignore:
       # Flag major version bumps for manual review
       - dependency-name: "*"
@@ -49,9 +65,16 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+    groups:
+      # Security advisories are kept out of the regular groups so the
+      # auto-merge workflow can target them via the security-advisory label.
+      security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
     labels:
       - dependencies
       - github-actions
+      - security-advisory
     ignore:
       # Flag major version bumps for manual review
       - dependency-name: "*"

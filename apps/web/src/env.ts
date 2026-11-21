@@ -1,6 +1,55 @@
 import { createEnv } from '@t3-oss/env-nextjs'
 import { z } from 'zod'
 
+// Explicit production allowlist. Only these origins are permitted by default.
+export const DEFAULT_CORS_ALLOWED_ORIGINS = [
+  'https://solarproof.vercel.app',
+  'https://staging.solarproof.vercel.app',
+] as const
+
+const isProduction = process.env.NODE_ENV === 'production'
+
+// Parses a comma-separated list of origins into validated URLs.
+// Rejects wildcard entries in production and fails fast on malformed origins.
+const corsAllowedOriginsSchema = z
+  .string()
+  .default(DEFAULT_CORS_ALLOWED_ORIGINS.join(','))
+  .transform((value) =>
+    value
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0),
+  )
+  .superRefine((origins, ctx) => {
+    if (origins.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'CORS_ALLOWED_ORIGINS must contain at least one origin',
+      })
+      return
+    }
+
+    for (const origin of origins) {
+      if (origin === '*' || origin.includes('*')) {
+        if (isProduction) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Wildcard CORS origin "${origin}" is not allowed in production`,
+          })
+        }
+        continue
+      }
+
+      const parsed = z.string().url().safeParse(origin)
+      if (!parsed.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Invalid CORS origin "${origin}": must be a valid URL`,
+        })
+      }
+    }
+  })
+
 export const env = createEnv({
   skipValidation: !!process.env.SKIP_ENV_VALIDATION,
   server: {
@@ -8,7 +57,8 @@ export const env = createEnv({
     ADMIN_SECRET: z.string().min(16).optional(),
     // Comma-separated list of allowed CORS origins.
     // Example: https://solarproof.vercel.app,https://staging.solarproof.vercel.app
-    CORS_ALLOWED_ORIGINS: z.string().optional(),
+    // Defaults to the explicit production allowlist; wildcards are rejected in production.
+    CORS_ALLOWED_ORIGINS: corsAllowedOriginsSchema,
     // Secrets Manager ARN for the active minter key (production)
     MINTER_SECRET_ARN: z.string().min(1).optional(),
     // ARN of the previous key — set during the 24-h rotation grace window

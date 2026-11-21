@@ -69,4 +69,50 @@ describe('getCorsHeaders', () => {
     expect(headers['Access-Control-Allow-Methods']).toContain('POST')
     expect(headers['Access-Control-Allow-Headers']).toContain('Authorization')
   })
+
+  it('rejects a wildcard origin in production', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', '*')
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    expect(() => getCorsHeaders(PROD_ORIGIN)).toThrow()
+  })
+
+  it('rejects a wildcard mixed with other origins in production', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', `${PROD_ORIGIN},*`)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    expect(() => getCorsHeaders(PROD_ORIGIN)).toThrow()
+  })
+
+  it('applies the default allowlist when the env var is unset in production', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', '')
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    expect(getCorsHeaders(PROD_ORIGIN)).not.toBeNull()
+    expect(getCorsHeaders('https://staging.solarproof.vercel.app')).not.toBeNull()
+    expect(getCorsHeaders(UNKNOWN_ORIGIN)).toBeNull()
+    expect(getCorsHeaders(DEV_ORIGIN)).toBeNull()
+  })
+
+  it('rejects invalid origin strings in production', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', 'not-a-valid-origin')
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    expect(() => getCorsHeaders(PROD_ORIGIN)).toThrow()
+  })
+
+  it('rejects origins with a path or trailing slash in production', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', `${PROD_ORIGIN}/api`)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    expect(() => getCorsHeaders(PROD_ORIGIN)).toThrow()
+  })
+
+  it('tolerates a wildcard in development', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', '*')
+    vi.stubEnv('NODE_ENV', 'development')
+    const { getCorsHeaders } = await import('./cors')
+    expect(() => getCorsHeaders(DEV_ORIGIN)).not.toThrow()
+    expect(getCorsHeaders(DEV_ORIGIN)).not.toBeNull()
+  })
 })
