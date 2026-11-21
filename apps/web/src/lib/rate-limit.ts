@@ -31,18 +31,78 @@ export interface RateLimitResult {
   resetAt: number
 }
 
-/** Verify endpoint policy: 30 requests / 60 s per IP. */
+/** Verify endpoint policy for authenticated / verified callers: 30 requests / 60 s per IP. */
 export const VERIFY_RATE_LIMIT = {
   limit: 30,
   windowMs: 60_000,
 } as const
 
+/** Verify endpoint policy for unverified callers: 5 requests / 60 s per IP. */
+export const VERIFY_UNVERIFIED_RATE_LIMIT = {
+  limit: 5,
+  windowMs: 60_000,
+} as const
+
 /**
- * Rate-limit helper for the public verifier.
+ * Rate-limit helper for the public verifier (authenticated tier).
  * Uses the key `<ip>:verify:<ip>` so it never collides with other routes.
  */
 export function checkVerifyRateLimit(ip: string): RateLimitResult {
   return checkRateLimit(`ip:verify:${ip}`, VERIFY_RATE_LIMIT.limit, VERIFY_RATE_LIMIT.windowMs)
+}
+
+/**
+ * Rate-limit helper for unverified callers of the public verifier.
+ * Uses a distinct key (`ip:verify:unverified:<ip>`) so the stricter
+ * unverified tier never collides with the authenticated tier.
+ */
+export function checkUnverifiedVerifyRateLimit(ip: string): RateLimitResult {
+  return checkRateLimit(
+    `ip:verify:unverified:${ip}`,
+    VERIFY_UNVERIFIED_RATE_LIMIT.limit,
+    VERIFY_UNVERIFIED_RATE_LIMIT.windowMs,
+  )
+}
+
+/**
+ * Returns true when the request carries a valid internal admin token,
+ * allowing verification (bot challenge + rate limit) to be bypassed for
+ * trusted service-to-service calls.
+ */
+export function hasAdminToken(req: Request): boolean {
+  const expected = process.env.ADMIN_TOKEN
+  if (!expected) return false
+
+  const headers = req instanceof Request ? req.headers : (req as { headers: Headers }).headers
+  const auth = headers.get('authorization')
+  const bearer = auth?.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : undefined
+  const provided = bearer ?? headers.get('x-admin-token') ?? undefined
+
+  if (!provided || provided.length !== expected.length) return false
+
+  // Constant-time comparison to avoid leaking the token via timing.
+  let mismatch = 0
+  for (let i = 0; i < expected.length; i += 1) {
+    mismatch |= provided.charCodeAt(i) ^ expected.charCodeAt(i)
+  }
+  return mismatch === 0
+}
+
+/**
+ * Applies the appropriate verify rate-limit tier for a request.
+ * Admin-token callers bypass rate limiting entirely; unverified callers
+ * get the stricter 5 req/min tier, verified callers the 30 req/min tier.
+ */
+export function checkVerifyRateLimitForRequest(
+  req: Request,
+  options: { verified: boolean },
+): RateLimitResult {
+  if (hasAdminToken(req)) {
+    return { allowed: true, remaining: Number.POSITIVE_INFINITY, resetAt: 0 }
+  }
+
+  const ip = getClientIp(req)
+  return options.verified ? checkVerifyRateLimit(ip) : checkUnverifiedVerifyRateLimit(ip)
 }
 
 /**

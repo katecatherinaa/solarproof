@@ -4,6 +4,24 @@ import { createAnonClient } from '@/lib/supabase'
 import { getCachedCert, setCachedCert } from '@/lib/cache'
 import { stellarExplorerUrl, type NetworkName } from '@solarproof/stellar'
 import { env } from '@/env'
+import { verifyBotToken } from '@/lib/bot-protection'
+import { checkRateLimit } from '@/lib/rate-limit'
+
+const UNVERIFIED_RATE_LIMIT = 5
+const RATE_LIMIT_WINDOW_MS = 60_000
+
+function getClientIp(req: NextRequest): string {
+  const forwarded = req.headers.get('x-forwarded-for')
+  if (forwarded) return forwarded.split(',')[0]!.trim()
+  return req.headers.get('x-real-ip') ?? 'unknown'
+}
+
+function isAdminRequest(req: NextRequest): boolean {
+  const adminToken = env.ADMIN_API_TOKEN
+  if (!adminToken) return false
+  const provided = req.headers.get('x-admin-token')
+  return provided === adminToken
+}
 
 // UUID or 64-char hex hash (reading_hash / tx_hash)
 const VerifyQuerySchema = z.object({
@@ -18,6 +36,30 @@ const VerifyQuerySchema = z.object({
  * Results are cached in Redis for 60 s (TTL defined in cache.ts).
  */
 export async function GET(req: NextRequest) {
+  // Internal service calls (admin token) bypass bot protection and rate limiting
+  const isAdmin = isAdminRequest(req)
+
+  if (!isAdmin) {
+    const ip = getClientIp(req)
+    const rate = await checkRateLimit(`verify:${ip}`, UNVERIFIED_RATE_LIMIT, RATE_LIMIT_WINDOW_MS)
+    if (!rate.allowed) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(rate.resetMs / 1000)) } },
+      )
+    }
+
+    const botToken =
+      req.headers.get('cf-turnstile-response') ??
+      req.headers.get('x-hcaptcha-response') ??
+      req.nextUrl.searchParams.get('bot_token') ??
+      undefined
+    const botOk = await verifyBotToken(botToken, ip)
+    if (!botOk) {
+      return NextResponse.json({ error: 'Bot verification failed' }, { status: 403 })
+    }
+  }
+
   const queryParams = Object.fromEntries(req.nextUrl.searchParams.entries())
   const parsed = VerifyQuerySchema.safeParse(queryParams)
   if (!parsed.success) {

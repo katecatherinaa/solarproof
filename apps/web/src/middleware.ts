@@ -36,6 +36,25 @@ function hasAcceptableContentType(req: NextRequest): boolean {
 }
 
 /**
+ * Ensure a Content-Security-Policy value includes the `require-sri-for`
+ * directive. If the directive is already present it is left untouched; if no
+ * CSP is supplied a minimal policy is returned. This keeps the middleware in
+ * sync with the CSP defined in next.config.ts without duplicating the full
+ * policy here.
+ */
+function ensureRequireSriFor(csp: string | null): string {
+  const directive = 'require-sri-for script style'
+  if (!csp) {
+    return `default-src 'self'; ${directive}`
+  }
+  if (/(^|;)\s*require-sri-for\b/i.test(csp)) {
+    return csp
+  }
+  const trimmed = csp.trim().replace(/;$/, '')
+  return trimmed ? `${trimmed}; ${directive}` : directive
+}
+
+/**
  * Middleware that:
  * 1. Enforces CORS policy — restricts origins to CORS_ALLOWED_ORIGINS + localhost in dev.
  * 2. Handles OPTIONS preflight requests.
@@ -43,6 +62,9 @@ function hasAcceptableContentType(req: NextRequest): boolean {
  * 4. Rejects POST/PUT/PATCH /api/** requests without a JSON Content-Type (415).
  * 5. Injects a correlation ID into every API request.
  * 6. Redirects unversioned /api/* routes to /api/v1/* with a deprecation header.
+ * 7. Ensures the Content-Security-Policy includes `require-sri-for` so that
+ *    browsers refuse to load third-party scripts/styles without valid SRI
+ *    hashes. Must stay aligned with the CSP defined in next.config.ts.
  *
  * Content-Type enforcement:
  *   - POST/PUT/PATCH requests to /api/** must send `Content-Type: application/json`
@@ -215,6 +237,15 @@ export function middleware(req: NextRequest) {
   })
   res.headers.set('x-correlation-id', correlationId)
   res.headers.set('API-Version', 'v1')
+
+  // ── Content-Security-Policy: require SRI for third-party assets ───────────
+  // Preserve any CSP already set upstream (e.g. by next.config.ts) and only
+  // append `require-sri-for` when it is missing. Never strip existing
+  // directives so SRI-related configuration stays intact.
+  const existingCsp =
+    res.headers.get('content-security-policy') ??
+    req.headers.get('content-security-policy')
+  res.headers.set('Content-Security-Policy', ensureRequireSriFor(existingCsp))
 
   // ── Attach CORS headers ───────────────────────────────────────────────────
   if (corsHeaders) {

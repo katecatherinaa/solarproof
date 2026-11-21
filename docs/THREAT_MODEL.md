@@ -89,6 +89,26 @@ Supabase (off-chain store)
 **Mitigation:** TTL bump logic must be implemented before mainnet deployment (tracked in roadmap).  
 **Residual risk:** High on mainnet without TTL management; Low on testnet.
 
+#### T3 — Third-party script tampering (CDN compromise)
+**Attack vector:** An attacker who compromises a third-party CDN (Sentry, analytics) or the upstream package replaces a served script or stylesheet with malicious content.  
+**Impact:** Arbitrary JavaScript execution in the verifier UI context — e.g. exfiltration of session data or tampering with displayed audit results.  
+**Mitigation:** Every external `<script>` and `<link>` tag carries a Subresource Integrity (`integrity`) hash plus `crossorigin="anonymous"`. The Content-Security-Policy includes `require-sri-for script style`, so browsers refuse to load any third-party asset that lacks an integrity attribute. An automated CI check fails the build if any external asset is added without an `integrity` hash.  
+**Residual risk:** Low — a CDN compromise cannot alter the asset without breaking the hash.
+
+**SRI fallback behaviour (when an integrity check fails):**
+
+1. **Asset blocked.** The browser refuses to execute or apply the asset whose bytes do not match the `integrity` hash. The page continues to load without that asset; no partially-verified script is ever run.
+2. **Feature disabled.** Any feature that depends on the blocked asset degrades gracefully — e.g. if the Sentry bundle fails SRI, error reporting is disabled for that session but the verifier UI remains fully functional. Features must never assume a third-party asset loaded successfully.
+3. **Error surfaced.** The failure is reported via an `onerror` handler on the tag and a `window` `error`/`securitypolicyviolation` listener, which forwards a sanitized event (asset URL, expected hash, page route — never user data) to Sentry. CSP violations are additionally reported through the `report-uri`/`report-to` directive.
+4. **No silent fallback to an unverified copy.** We never re-fetch the asset from an alternate origin or without integrity checking; a failed SRI check is treated as a potential compromise until investigated.
+
+**Updating hashes when third-party versions change:**
+
+- Hashes are generated from the exact pinned version, e.g. `openssl dgst -sha384 -binary sentry.min.js | openssl base64 -A` (or `shasum -b -a 384`), and recorded as `sha384-<base64>`.
+- Third-party versions are pinned (no floating `latest` URLs); a version bump is a dedicated PR that updates the URL and the `integrity` hash together.
+- The CI SRI check re-computes each hash against the fetched asset and fails if it does not match, so a stale hash cannot be merged.
+- Hash updates require review from a security-aware contributor and are noted in the PR description.
+
 ---
 
 ### 4.3 Repudiation
@@ -180,6 +200,7 @@ Supabase (off-chain store)
 | Cross-cooperative access | `cooperative_id` scoping + RLS + service-role discipline (I3) |
 | Governance manipulation | Token-weighted voting + voter-index bitmap + quorum (E1) |
 | Storage expiry | TTL management (T2) — open risk before mainnet |
+| Tampered third-party script (CDN compromise) | Subresource Integrity (SRI) hashes + CSP `require-sri-for` (T3) |
 
 ---
 
@@ -188,7 +209,7 @@ Supabase (off-chain store)
 - Stellar network-level attacks (validator collusion, eclipse attacks)
 - Vercel / hosting infrastructure compromise
 - Browser-side attacks on the public verifier UI
-- Supply-chain attacks on npm/cargo dependencies
+- Supply-chain attacks on npm/cargo dependencies (SRI covers only browser-loaded third-party assets, see T3)
 
 ---
 

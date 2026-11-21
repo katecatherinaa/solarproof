@@ -66,6 +66,8 @@ jobs:
         env:
           # Enforce coverage for every supported locale, including pt-BR.
           I18N_LOCALES: en,es,pt-BR
+      - name: SRI check (third-party scripts/links)
+        run: node scripts/check-sri.mjs
       - run: pnpm test
         working-directory: apps/web
       - name: Run tests with coverage
@@ -90,6 +92,9 @@ jobs:
           MINTER_SECRET_KEY: ${{ secrets.MINTER_SECRET_KEY }}
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+
+      - name: SRI check (built HTML)
+        run: node scripts/check-sri.mjs --built apps/web/.next
 
   playwright-e2e:
     name: Playwright E2E

@@ -40,6 +40,7 @@ const securityHeaders = [
       "font-src 'self'",
       "connect-src 'self' https://*.supabase.co https://soroban-testnet.stellar.org https://soroban.stellar.org wss://*.supabase.co",
       "frame-ancestors 'none'",
+      "require-sri-for 'script style'",
       "report-uri /api/csp-report",
     ].join('; '),
   },

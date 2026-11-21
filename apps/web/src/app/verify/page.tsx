@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import Script from 'next/script'
 import { Search, CheckCircle, XCircle, Shield, ExternalLink, Copy, Download } from 'lucide-react'
 import { SectionSkeleton } from '@/components/skeleton'
 import { CopyableText } from '@/components/copy-button'
@@ -105,6 +106,30 @@ function buildSteps(data: ChainOfCustody): Step[] {
 
 const KIOSK_INACTIVITY_MS = 60_000
 
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY
+
+interface TurnstileApi {
+  render: (
+    container: HTMLElement,
+    options: {
+      sitekey: string
+      callback: (token: string) => void
+      'error-callback'?: () => void
+      'expired-callback'?: () => void
+      'timeout-callback'?: () => void
+      theme?: 'light' | 'dark' | 'auto'
+    },
+  ) => string
+  reset: (widgetId?: string) => void
+  remove: (widgetId: string) => void
+}
+
+declare global {
+  interface Window {
+    turnstile?: TurnstileApi
+  }
+}
+
 export default function VerifyPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -115,8 +140,13 @@ export default function VerifyPage() {
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  const [turnstileError, setTurnstileError] = useState<string | null>(null)
+  const [turnstileReady, setTurnstileReady] = useState(false)
   const { pushToast } = useToast()
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const turnstileContainerRef = useRef<HTMLDivElement | null>(null)
+  const turnstileWidgetId = useRef<string | null>(null)
 
   const resetKiosk = useCallback(() => {
     setQuery('')
@@ -125,8 +155,54 @@ export default function VerifyPage() {
     setLoading(false)
     setCopied(false)
     setDownloadError(null)
+    setTurnstileToken(null)
+    setTurnstileError(null)
+    if (turnstileWidgetId.current && window.turnstile) {
+      window.turnstile.reset(turnstileWidgetId.current)
+    }
     router.replace('/verify?kiosk=1')
   }, [router])
+
+  const renderTurnstile = useCallback(() => {
+    if (!TURNSTILE_SITE_KEY) return
+    if (!window.turnstile || !turnstileContainerRef.current) return
+    if (turnstileWidgetId.current) return
+
+    turnstileWidgetId.current = window.turnstile.render(turnstileContainerRef.current, {
+      sitekey: TURNSTILE_SITE_KEY,
+      theme: 'auto',
+      callback: (token: string) => {
+        setTurnstileToken(token)
+        setTurnstileError(null)
+      },
+      'error-callback': () => {
+        setTurnstileToken(null)
+        setTurnstileError('Bot protection challenge failed. Please retry.')
+      },
+      'expired-callback': () => {
+        setTurnstileToken(null)
+        setTurnstileError('Bot protection challenge expired. Please retry.')
+      },
+      'timeout-callback': () => {
+        setTurnstileToken(null)
+        setTurnstileError('Bot protection challenge timed out. Please retry.')
+      },
+    })
+    setTurnstileReady(true)
+  }, [])
+
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return
+    if (window.turnstile) {
+      renderTurnstile()
+    }
+    return () => {
+      if (turnstileWidgetId.current && window.turnstile) {
+        window.turnstile.remove(turnstileWidgetId.current)
+        turnstileWidgetId.current = null
+      }
+    }
+  }, [renderTurnstile])
 
   useEffect(() => {
     if (!kiosk) return
@@ -187,17 +263,32 @@ export default function VerifyPage() {
     e.preventDefault()
     const q = query.trim()
     if (!q) return
+
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      const message = turnstileError ?? 'Please complete the bot protection challenge before verifying.'
+      setPageError(new Error(message))
+      pushToast({ variant: 'error', title: 'Verification blocked', description: message })
+      return
+    }
+
     setLoading(true)
     setPageError(null)
     setResult(null)
     router.replace(`/verify?id=${encodeURIComponent(q)}`)
     try {
-      const res = await fetch(`/api/verify?id=${encodeURIComponent(q)}`)
+      const res = await fetch(`/api/verify?id=${encodeURIComponent(q)}`, {
+        headers: turnstileToken ? { 'x-turnstile-token': turnstileToken } : undefined,
+      })
       const data = await res.json()
       if (!res.ok) {
         const message = data.error || 'Unable to verify certificate'
         setPageError(new Error(message))
         pushToast({ variant: 'error', title: 'Verification failed', description: message })
+        // A rejected token cannot be reused — force a fresh challenge.
+        if (res.status === 403 && turnstileWidgetId.current && window.turnstile) {
+          setTurnstileToken(null)
+          window.turnstile.reset(turnstileWidgetId.current)
+        }
         return
       }
 
@@ -242,6 +333,13 @@ export default function VerifyPage() {
 
   return (
     <div className={containerClass}>
+      {TURNSTILE_SITE_KEY && (
+        <Script
+          src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
+          strategy="afterInteractive"
+          onLoad={renderTurnstile}
+        />
+      )}
       {kiosk && (
         <p role="status" aria-live="polite" className="sr-only">
           Kiosk mode active. The screen will automatically reset after 60 seconds of inactivity.
@@ -274,7 +372,7 @@ export default function VerifyPage() {
           />
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || (Boolean(TURNSTILE_SITE_KEY) && !turnstileToken)}
             aria-busy={loading}
             className={submitClass}
           >
@@ -282,6 +380,23 @@ export default function VerifyPage() {
             {loading ? 'Verifying…' : 'Verify'}
           </button>
         </div>
+        {TURNSTILE_SITE_KEY && (
+          <div className="mt-3">
+            <div
+              ref={turnstileContainerRef}
+              aria-label="Bot protection challenge"
+              aria-busy={!turnstileReady}
+            />
+            {turnstileError && (
+              <p role="alert" className="mt-1 text-xs text-red-600 dark:text-red-400">
+                {turnstileError}
+              </p>
+            )}
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Protected by Cloudflare Turnstile. Complete the challenge to verify a certificate.
+            </p>
+          </div>
+        )}
       </form>
       <p id="verify-hint" className="sr-only">Enter a certificate ID, reading hash, or transaction hash to verify the chain of custody.</p>
 

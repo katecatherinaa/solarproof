@@ -116,6 +116,15 @@ export async function revokeToken(accessToken: string): Promise<void> {
 const ACCESS_TOKEN_COOKIE = 'sp_access_token'
 
 /**
+ * Whether auth cookies should be marked `Secure`.
+ * Derived from the app URL so staging (HTTPS) also gets Secure cookies,
+ * while local HTTP development does not (issue #764).
+ */
+export function shouldUseSecureCookies(): boolean {
+  return env.NEXT_PUBLIC_APP_URL.startsWith('https')
+}
+
+/**
  * Extract and validate the Bearer JWT from either:
  *   1. The `sp_access_token` HttpOnly cookie (set by /api/auth/login), or
  *   2. The `Authorization: Bearer <token>` header (for API / non-browser clients).

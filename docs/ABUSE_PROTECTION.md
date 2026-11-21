@@ -9,12 +9,12 @@ SolarProof's public API endpoints are protected against abuse via IP-based rate 
 | Endpoint | Limit | Window |
 |---|---|---|
 | `POST /api/readings` | 10 requests | 60 seconds per IP |
-| `GET /api/verify` | 30 requests | 60 seconds per IP |
-| `GET /api/verify/{id}` | 30 requests | 60 seconds per IP |
-| `GET /api/v1/verify` | 30 requests | 60 seconds per IP |
-| `GET /api/v1/verify/{id}` | 30 requests | 60 seconds per IP |
+| `GET /api/verify` | 5 requests | 60 seconds per IP (unverified) |
+| `GET /api/verify/{id}` | 5 requests | 60 seconds per IP (unverified) |
+| `GET /api/v1/verify` | 5 requests | 60 seconds per IP (unverified) |
+| `GET /api/v1/verify/{id}` | 5 requests | 60 seconds per IP (unverified) |
 
-The public verifier endpoints (`/api/verify`, `/api/verify/{id}` and their `/api/v1` equivalents) are limited to **30 requests per 60 seconds per IP**.
+The public verifier endpoints (`/api/verify`, `/api/verify/{id}` and their `/api/v1` equivalents) are limited to **5 requests per 60 seconds per IP** for callers that have not passed a bot-detection challenge. Internal service calls authenticated with an admin token bypass the challenge and are not subject to the unverified limit (see [CAPTCHA / bot detection](#captcha--bot-detection)).
 
 ---
 
@@ -58,9 +58,9 @@ This prevents fabricated readings from untrusted sources (`HTTP 401`).
 
 ---
 
-## CAPTCHA / bot detection (optional)
+## CAPTCHA / bot detection
 
-For high-volume or higher-risk deployments, an optional bot-detection challenge can be layered on top of rate limiting. It is disabled by default and gated by the `BOT_DETECTION_PROVIDER` environment variable:
+The public verifier (`/verify` page and the `/api/verify` endpoints) is protected by a bot-detection challenge to prevent scraping and certificate enumeration. The provider is selected with the `BOT_DETECTION_PROVIDER` environment variable:
 
 | `BOT_DETECTION_PROVIDER` | Provider | Required secret |
 |---|---|---|
@@ -68,10 +68,19 @@ For high-volume or higher-risk deployments, an optional bot-detection challenge 
 | `turnstile` | [Cloudflare Turnstile](https://developers.cloudflare.com/turnstile/) | `TURNSTILE_SECRET_KEY` |
 | `hcaptcha` | [hCaptcha](https://www.hcaptcha.com/) | `HCAPTCHA_SECRET_KEY` |
 
-When enabled, the client obtains a token from the provider and passes it to the API; the server verifies the token against the provider's siteverify endpoint before processing the request. Requests with a missing or invalid token are rejected.
+When enabled:
+
+- The `/verify` page renders the provider's challenge widget and obtains a token on success.
+- The client passes the token to the API; the `/api/verify/[id]` handler validates it server-side against the provider's siteverify endpoint before processing the request.
+- Requests with a missing or invalid token are rejected with `HTTP 403`.
+- Callers that have not passed the challenge are held to the stricter **5 requests per 60 seconds per IP** limit.
 
 - **Cloudflare Turnstile** — zero-friction, works with edge middleware
 - **hCaptcha** — open alternative
+
+### Internal service calls
+
+Trusted internal services may bypass the challenge by sending an admin token in the `Authorization: Bearer <ADMIN_TOKEN>` header. When the token is valid, the `/api/verify/[id]` handler skips token validation and the unverified rate limit. Invalid or missing admin tokens fall back to the normal challenge and rate-limit path.
 
 ---
 

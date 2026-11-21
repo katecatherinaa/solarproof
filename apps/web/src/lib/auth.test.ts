@@ -24,7 +24,7 @@ vi.mock('@/lib/audit', () => ({
 }))
 
 import { createClient } from '@supabase/supabase-js'
-import { requireAuth, isAuthError, revokeToken } from '@/lib/auth'
+import { requireAuth, isAuthError, revokeToken, isSecureCookie } from '@/lib/auth'
 import { getCachedRevocation, setCachedRevocation } from '@/lib/cache'
 import { auditLog } from '@/lib/audit'
 
@@ -155,5 +155,37 @@ describe('revokeToken', () => {
       expect.objectContaining({ jti: 'jti-1' })
     )
     expect(mockSetCachedRevocation).toHaveBeenCalledWith('jti-1', true)
+  })
+})
+
+describe('isSecureCookie', () => {
+  const originalAppUrl = process.env.NEXT_PUBLIC_APP_URL
+
+  afterEach(() => {
+    if (originalAppUrl === undefined) {
+      delete process.env.NEXT_PUBLIC_APP_URL
+    } else {
+      process.env.NEXT_PUBLIC_APP_URL = originalAppUrl
+    }
+  })
+
+  it('returns true when NEXT_PUBLIC_APP_URL is HTTPS (production)', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'https://app.spore.example'
+    expect(isSecureCookie()).toBe(true)
+  })
+
+  it('returns true when NEXT_PUBLIC_APP_URL is HTTPS (staging)', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'https://staging.spore.example'
+    expect(isSecureCookie()).toBe(true)
+  })
+
+  it('returns false when NEXT_PUBLIC_APP_URL is HTTP (local development)', () => {
+    process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000'
+    expect(isSecureCookie()).toBe(false)
+  })
+
+  it('returns false when NEXT_PUBLIC_APP_URL is unset', () => {
+    delete process.env.NEXT_PUBLIC_APP_URL
+    expect(isSecureCookie()).toBe(false)
   })
 })
