@@ -23,8 +23,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Record job start time
+        id: timing
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Install nightly Rust
         uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Cache the fuzz workspace (where cargo-fuzz builds targets) and the
+          # contracts workspace it depends on. The default lockfile hashing
+          # includes Cargo.lock, so lockfile changes invalidate the cache.
+          workspaces: |
+            apps/contracts/fuzz
+            apps/contracts
+          # Include the lockfiles explicitly in the cache key so stale caches
+          # are never reused when dependencies change.
+          key: ${{ hashFiles('apps/contracts/fuzz/Cargo.lock', 'apps/contracts/Cargo.lock') }}
+          cache-on-failure: true
 
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
@@ -36,3 +54,12 @@ jobs:
       - name: Fuzz community_governance.vote
         working-directory: apps/contracts/fuzz
         run: cargo fuzz run fuzz_vote -- -max_total_time=30 -max_len=128
+
+      - name: Report fuzz job runtime
+        if: always()
+        run: |
+          end=$(date +%s)
+          start=${{ steps.timing.outputs.start }}
+          elapsed=$((end - start))
+          echo "Fuzz job runtime: ${elapsed}s" >> "$GITHUB_STEP_SUMMARY"
+          echo "Fuzz job runtime: ${elapsed}s"

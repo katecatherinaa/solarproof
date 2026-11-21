@@ -69,6 +69,14 @@ export const env = createEnv({
     READINGS_RATE_LIMIT_PER_MINUTE: z.string().optional(),
     READINGS_RATE_LIMIT_WINDOW_SECONDS: z.string().optional(),
     WEBHOOK_SECRET: z.string().min(16).optional(),
+    // PgBouncer pooled connection string (production). When set, server code
+    // should prefer this over direct Supabase connections to avoid exhausting
+    // the database connection limit under serverless load.
+    PGBOUNCER_URL: z.string().url().optional(),
+    // Number of server-side connections PgBouncer keeps per pool.
+    PGBOUNCER_POOL_SIZE: z.string().optional().default('10'),
+    // Maximum number of client (serverless) connections PgBouncer accepts.
+    PGBOUNCER_MAX_CLIENT_CONN: z.string().optional(),
     // EVM/Polygon certificate NFT minting (optional, opt-in per cooperative)
     EVM_NFT_MINTING_ENABLED: z
       .enum(['true', 'false'])
@@ -109,6 +117,9 @@ export const env = createEnv({
     READINGS_RATE_LIMIT_PER_MINUTE: process.env.READINGS_RATE_LIMIT_PER_MINUTE,
     READINGS_RATE_LIMIT_WINDOW_SECONDS: process.env.READINGS_RATE_LIMIT_WINDOW_SECONDS,
     WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
+    PGBOUNCER_URL: process.env.PGBOUNCER_URL,
+    PGBOUNCER_POOL_SIZE: process.env.PGBOUNCER_POOL_SIZE,
+    PGBOUNCER_MAX_CLIENT_CONN: process.env.PGBOUNCER_MAX_CLIENT_CONN,
     EVM_NFT_MINTING_ENABLED: process.env.EVM_NFT_MINTING_ENABLED,
     EVM_RPC_URL: process.env.EVM_RPC_URL,
     EVM_PRIVATE_KEY: process.env.EVM_PRIVATE_KEY,

@@ -1388,3 +1388,42 @@ Liveness check. Identical to `GET /api/health`.
 ## Postman / Insomnia collection
 
 A collection is available at [`docs/solarproof-api-v1.postman_collection.json`](./solarproof-api-v1.postman_collection.json) and can be imported directly into Postman or Insomnia. Set the `baseUrl` collection variable to your target environment (`https://solarproof.vercel.app` for production, `http://localhost:3000` for local).
+
+---
+
+## Bridge API Postman collection
+
+The bridge microservice has its own Postman collection covering all of its endpoints: [`docs/bridge-api.postman_collection.json`](./bridge-api.postman_collection.json).
+
+### Importing
+
+1. Open Postman and click **Import**.
+2. Select `docs/bridge-api.postman_collection.json` (or drag the file into the Postman window).
+3. The collection and its environments are imported in one step.
+
+### Selecting an environment
+
+The collection ships with two environments:
+
+| Environment | Use for |
+|---|---|
+| `Bridge — Testnet` | Manual testing against Stellar testnet |
+| `Bridge — Staging` | Manual testing against the staging deployment |
+
+Pick the environment from the environment selector in the top-right corner of Postman before sending requests.
+
+### Required variables
+
+Set the following variables in the selected environment (or in the collection variables for a quick local run):
+
+| Variable | Description |
+|---|---|
+| `bridgeBaseUrl` | Base URL of the bridge service (e.g. `http://localhost:8080` locally) |
+| `stellarNetwork` | Stellar network passphrase target (`testnet` or `staging`) |
+| `bridgeApiKey` | API key/token accepted by the bridge service, if required |
+| `sourceAccount` | Stellar account used as the transaction source |
+| `destinationAccount` | Stellar account receiving bridged assets |
+| `assetCode` / `assetIssuer` | Asset to bridge |
+| `amount` | Amount to bridge in the asset's base units |
+
+Once the variables are set, requests can be sent individually or run as a folder to exercise the full bridge flow.

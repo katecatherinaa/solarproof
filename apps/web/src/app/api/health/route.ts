@@ -4,6 +4,7 @@ import {
   checkStellarRpc,
   checkRedisUpstash,
   checkRedisBull,
+  checkConnectionPool,
   type CheckResult,
   type CheckStatus,
 } from '@/lib/health-checks'
@@ -15,14 +16,15 @@ export async function GET() {
     checkStellarRpc(),
     checkRedisUpstash(),
     checkRedisBull(),
+    checkConnectionPool(),
   ])
 
-  const [db, stellar, upstash, bull] = checks
+  const [db, stellar, upstash, bull, pool] = checks
 
   const overallStatus: CheckStatus =
-    [db, stellar, upstash, bull].some(c => c.status === 'error')
+    [db, stellar, upstash, bull, pool].some(c => c.status === 'error')
       ? 'error'
-      : [db, stellar, upstash, bull].some(c => c.status === 'degraded')
+      : [db, stellar, upstash, bull, pool].some(c => c.status === 'degraded')
       ? 'degraded'
       : 'ok'
 
@@ -37,7 +39,13 @@ export async function GET() {
     {
       status: overallStatus,
       ts: Date.now(),
-      checks: { database: db, stellar_rpc: stellarField, redis_upstash: upstash, redis_bull: bull },
+      checks: {
+        database: db,
+        stellar_rpc: stellarField,
+        redis_upstash: upstash,
+        redis_bull: bull,
+        connection_pool: pool,
+      },
       ...(stellar.status !== 'ok' ? { stellar: stellarField.status === 'error' ? 'unreachable' : 'degraded' } : {}),
     },
     { status: httpStatus }

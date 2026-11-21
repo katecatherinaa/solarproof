@@ -24,6 +24,21 @@
  *     -e METER_ID=<uuid> \
  *     -e API_KEY=<meter-api-key>
  *
+ * Usage — PgBouncer connection-pool verification (issue #715):
+ *   Run against staging (which uses the pooled PgBouncer connection string)
+ *   with 500 concurrent users. The scenario must complete with ZERO
+ *   connection-pool errors (no 5xx, no "too many connections" / pool
+ *   exhaustion responses). Any such error fails the run via the
+ *   `connection_pool_errors` threshold.
+ *
+ *   k6 run tests/load/readings.js \
+ *     -e API_URL=https://your-staging-url \
+ *     -e SCENARIO=pool \
+ *     -e METER_ID=<uuid> \
+ *     -e API_KEY=<meter-api-key>
+ *
+ *   CI: see .github/workflows/load-test.yml (SCENARIO=pool job).
+ *
  * Note: k6 does not include Node.js crypto. Signatures are pre-computed
  * placeholders; the API will respond 401 (invalid sig), which still
  * exercises the full request-processing path and satisfies latency SLOs.
@@ -41,6 +56,11 @@ import { Trend, Rate, Counter } from 'k6/metrics'
 const readingDuration = new Trend('reading_duration_ms', true)
 const errorRate = new Rate('error_rate')
 const requestCount = new Counter('request_count')
+// Issue #715 — connection-pool health. Counts any response that indicates the
+// database connection pool (PgBouncer) was exhausted or misconfigured.
+const connectionPoolErrors = new Counter('connection_pool_errors')
+// Rate of requests that hit a pool-related failure (0 is the only acceptable value).
+const connectionPoolErrorRate = new Rate('connection_pool_error_rate')
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -48,8 +68,11 @@ const requestCount = new Counter('request_count')
 const API_URL = __ENV.API_URL || 'http://localhost:3000'
 const METER_ID = __ENV.METER_ID || '00000000-0000-0000-0000-000000000001'
 const API_KEY = __ENV.API_KEY || 'mk_placeholder_key'
-// Set SCENARIO=baseline (default) or SCENARIO=breakpoint
+// Set SCENARIO=baseline (default), SCENARIO=breakpoint or SCENARIO=pool
 const SCENARIO = __ENV.SCENARIO || 'baseline'
+// Endpoint exercised by the pool scenario. Defaults to the readings endpoint;
+// set POOL_ENDPOINT=/api/readings/verify to exercise the verify path instead.
+const POOL_ENDPOINT = __ENV.POOL_ENDPOINT || '/api/readings'
 
 // ---------------------------------------------------------------------------
 // Scenarios
@@ -85,8 +108,21 @@ const breakpointScenario = {
   },
 }
 
+/**
+ * Connection-pool verification (issue #715): 500 concurrent users sustained
+ * against the pooled (PgBouncer) connection. Must produce zero connection
+ * errors — no 5xx and no "too many connections" / pool-exhaustion responses.
+ */
+const poolScenario = {
+  concurrent_meters: {
+    executor: 'constant-vus',
+    vus: 500,
+    duration: '60s',
+  },
+}
+
 // ---------------------------------------------------------------------------
-// Thresholds (applied to both scenarios)
+// Thresholds (applied to all scenarios)
 // ---------------------------------------------------------------------------
 const thresholds = {
   // Acceptance criterion: p95 response time < 500 ms
@@ -95,10 +131,18 @@ const thresholds = {
   'error_rate': ['rate<0.05'],
   // k6 built-in; consistent with error_rate above
   'http_req_failed': ['rate<0.05'],
+  // Issue #715 — zero tolerance for connection-pool errors
+  'connection_pool_errors': ['count==0'],
+  'connection_pool_error_rate': ['rate==0'],
 }
 
 export const options = {
-  scenarios: SCENARIO === 'breakpoint' ? breakpointScenario : baselineScenario,
+  scenarios:
+    SCENARIO === 'breakpoint'
+      ? breakpointScenario
+      : SCENARIO === 'pool'
+        ? poolScenario
+        : baselineScenario,
   thresholds,
 }
 
@@ -121,6 +165,35 @@ function buildPayload(vu) {
 }
 
 // ---------------------------------------------------------------------------
+// Connection-pool error detection (issue #715)
+// ---------------------------------------------------------------------------
+
+/** Patterns that indicate the DB connection pool (PgBouncer) was exhausted. */
+const POOL_ERROR_PATTERNS = [
+  'too many connections',
+  'too many clients',
+  'connection pool',
+  'pool exhausted',
+  'pool timeout',
+  'remaining connection slots',
+  'max_client_conn',
+  'server conn crashed',
+  'connection terminated unexpectedly',
+  'econnrefused',
+  'etimedout',
+]
+
+/**
+ * Returns true when the response indicates a connection-pool failure:
+ * any 5xx, or a body/error message matching a known pool-exhaustion pattern.
+ */
+function isConnectionPoolError(res) {
+  if (res.status >= 500) return true
+  const body = (res.body || '').toLowerCase()
+  return POOL_ERROR_PATTERNS.some((p) => body.includes(p))
+}
+
+// ---------------------------------------------------------------------------
 // Default function — executed once per VU per iteration
 // ---------------------------------------------------------------------------
 export default function () {
@@ -134,7 +207,8 @@ export default function () {
     },
   }
 
-  const res = http.post(`${API_URL}/api/readings`, payload, params)
+  const endpoint = SCENARIO === 'pool' ? POOL_ENDPOINT : '/api/readings'
+  const res = http.post(`${API_URL}${endpoint}`, payload, params)
 
   // Track duration
   readingDuration.add(res.timings.duration)
@@ -150,6 +224,14 @@ export default function () {
 
   errorRate.add(!ok)
 
+  // Issue #715 — flag any connection-pool-related failure.
+  const poolErr = isConnectionPoolError(res)
+  if (poolErr) connectionPoolErrors.add(1)
+  connectionPoolErrorRate.add(poolErr)
+  check(res, {
+    'no connection-pool error': () => !poolErr,
+  })
+
   // 100 ms think time simulates real meter pacing
   sleep(0.1)
 }
@@ -164,6 +246,7 @@ export function handleSummary(data) {
   const rps  = data.metrics['http_reqs']?.values?.rate                  ?? 'N/A'
   const errs = (data.metrics['error_rate']?.values?.rate ?? 0) * 100
   const reqs = data.metrics['http_reqs']?.values?.count                 ?? 0
+  const poolErrs = data.metrics['connection_pool_errors']?.values?.count ?? 0
 
   const fmt = (v) => typeof v === 'number' ? `${v.toFixed(0)} ms` : String(v)
 
@@ -177,12 +260,19 @@ export function handleSummary(data) {
   console.log(`║  P95 duration    : ${fmt(p95).padEnd(18)}║`)
   console.log(`║  P99 duration    : ${fmt(p99).padEnd(18)}║`)
   console.log(`║  Error rate      : ${(typeof errs === 'number' ? errs.toFixed(2) + ' %' : errs).padEnd(18)}║`)
+  console.log(`║  Pool errors     : ${String(poolErrs).padEnd(18)}║`)
   console.log('╚══════════════════════════════════════╝\n')
 
   const passedP95 = typeof p95 === 'number' && p95 < 500
   console.log(passedP95
     ? '✅ PASSED — p95 < 500 ms (acceptance criterion met)'
     : '❌ FAILED — p95 ≥ 500 ms (acceptance criterion NOT met)')
+
+  // Issue #715 — connection-pool acceptance criterion
+  const passedPool = poolErrs === 0
+  console.log(passedPool
+    ? '✅ PASSED — zero connection-pool errors (PgBouncer criterion met)'
+    : `❌ FAILED — ${poolErrs} connection-pool error(s) detected (PgBouncer criterion NOT met)`)
 
   return {
     stdout: JSON.stringify(data, null, 2),

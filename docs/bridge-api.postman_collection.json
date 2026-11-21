@@ -1,0 +1,262 @@
+{
+  "info": {
+    "name": "SolarProof Bridge API",
+    "description": "Postman collection for the SolarProof bridge microservice API. Covers iREC batch submission, batch status polling, device registration, and health endpoints. Includes collection variables for baseUrl, jwt, and Evident credentials. Import the companion environment files (testnet/staging) or use the collection variables directly.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001",
+      "type": "string"
+    },
+    {
+      "key": "jwt",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "evidentApiUrl",
+      "value": "https://api.evident.testnet.example.com",
+      "type": "string"
+    },
+    {
+      "key": "evidentApiKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "evidentUsername",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "evidentPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "deviceId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "batchId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Get Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Returns the bridge service health status."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "iREC",
+      "item": [
+        {
+          "name": "Submit Batch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201 || pm.response.code === 202) {",
+                  "  const body = pm.response.json();",
+                  "  if (body && body.batchId) {",
+                  "    pm.collectionVariables.set('batchId', body.batchId);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceId\": \"{{deviceId}}\",\n  \"readings\": [\n    {\n      \"timestamp\": \"2024-01-01T00:00:00Z\",\n      \"energyWh\": 1000\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/irec/submit-batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "irec", "submit-batch"]
+            },
+            "description": "Submits a batch of meter readings to the iREC bridge for processing. On success the returned batchId is stored in the collection variable."
+          },
+          "response": []
+        },
+        {
+          "name": "Batch Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/irec/batch-status?batchId={{batchId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "irec", "batch-status"],
+              "query": [
+                {
+                  "key": "batchId",
+                  "value": "{{batchId}}",
+                  "description": "The batch identifier returned by Submit Batch."
+                }
+              ]
+            },
+            "description": "Returns the processing status of a previously submitted iREC batch."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Devices",
+      "item": [
+        {
+          "name": "Register Device",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  if (body && body.deviceId) {",
+                  "    pm.collectionVariables.set('deviceId', body.deviceId);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Test Solar Device\",\n  \"serialNumber\": \"SN-0001\",\n  \"capacityW\": 5000,\n  \"location\": {\n    \"latitude\": 0,\n    \"longitude\": 0\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices", "register"]
+            },
+            "description": "Registers a new device with the bridge service. On success the returned deviceId is stored in the collection variable."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Device",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/devices/{{deviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "devices", "{{deviceId}}"]
+            },
+            "description": "Returns details for a registered device."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Evident",
+      "item": [
+        {
+          "name": "Evident Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body && body.token) {",
+                  "    pm.collectionVariables.set('evidentApiKey', body.token);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{evidentUsername}}\",\n  \"password\": \"{{evidentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{evidentApiUrl}}/auth/login",
+              "host": ["{{evidentApiUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Authenticates against the Evident API and stores the returned token in the evidentApiKey variable."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

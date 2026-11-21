@@ -12,7 +12,13 @@ export interface CheckResult {
   status: CheckStatus
   latency_ms: number
   error?: string
+  /** Pool saturation ratio (active / max connections), when applicable. */
+  saturation?: number
 }
+
+/** Saturation ratio above which the connection pool is reported as degraded. */
+export const POOL_SATURATION_THRESHOLD = 0.8
+=======
 
 export async function withTimeout<T>(promise: PromiseLike<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>
@@ -64,6 +70,56 @@ export async function checkStellarRpc(): Promise<CheckResult> {
       latency_ms: Date.now() - start,
       error: 'unreachable',
     }
+  }
+}
+
+/**
+ * Checks PgBouncer pool saturation by querying the pooler admin/stats endpoint
+ * (or Supabase pooler metrics) exposed at PGBOUNCER_URL.
+ *
+ * Reports `active / max` connections as a saturation ratio and returns
+ * 'degraded' when saturation exceeds POOL_SATURATION_THRESHOLD.
+ */
+export async function checkConnectionPool(): Promise<CheckResult> {
+  const start = Date.now()
+  const url = process.env.PGBOUNCER_URL
+  if (!url) return { status: 'degraded', latency_ms: 0, error: 'PGBOUNCER_URL not configured' }
+  try {
+    const res = await withTimeout(
+      fetch(`${url.replace(/\/$/, '')}/stats`, {
+        headers: process.env.PGBOUNCER_ADMIN_TOKEN
+          ? { Authorization: `Bearer ${process.env.PGBOUNCER_ADMIN_TOKEN}` }
+          : {},
+      }),
+      TIMEOUT_MS
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const body = (await res.json()) as {
+      active?: number
+      max?: number
+      pools?: Array<{ active?: number; max?: number }>
+    }
+    // Support both a flat shape and PgBouncer's per-pool stats array.
+    const active =
+      typeof body.active === 'number'
+        ? body.active
+        : (body.pools ?? []).reduce((sum, p) => sum + (p.active ?? 0), 0)
+    const max =
+      typeof body.max === 'number'
+        ? body.max
+        : (body.pools ?? []).reduce((sum, p) => sum + (p.max ?? 0), 0)
+    const latency_ms = Date.now() - start
+    if (!max || max <= 0) {
+      return { status: 'degraded', latency_ms, error: 'pool max connections unavailable' }
+    }
+    const saturation = active / max
+    const status: CheckStatus =
+      saturation > POOL_SATURATION_THRESHOLD || latency_ms > DEGRADED_THRESHOLD_MS
+        ? 'degraded'
+        : 'ok'
+    return { status, latency_ms, saturation }
+  } catch (err) {
+    return { status: 'error', latency_ms: Date.now() - start, error: String(err) }
   }
 }
 
