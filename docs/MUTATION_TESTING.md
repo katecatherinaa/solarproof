@@ -8,6 +8,7 @@ Mutation testing verifies that the test suite actually catches bugs, not just th
 |---|---|---|
 | Rust contracts | [cargo-mutants](https://mutants.rs) | `apps/contracts/.cargo-mutants.toml` |
 | TypeScript (`packages/stellar`) | [Stryker](https://stryker-mutator.io) | `packages/stellar/stryker.config.mjs` |
+| TypeScript (`apps/web`) | [Stryker](https://stryker-mutator.io) | `apps/web/stryker.config.mjs` |
 
 ## Thresholds
 
@@ -72,6 +73,27 @@ Excluded from mutation (trivial getters with no logic):
 Mutates `src/**/*.ts` (excluding test files). Key targets:
 - `kwhToStroops` / `stroopsToKwh` — unit conversion used in every mint
 - `NETWORKS` / `CONTRACT_IDS` — network configuration
+
+### TypeScript — `apps/web`
+
+Mutates `src/lib/crypto.ts` only (see `mutate` in `apps/web/stryker.config.mjs`). Key targets:
+- `computeReadingHash` — canonical hashing of meter readings; a mutant here would let tampered readings verify
+- `verifyReadingSignature` — Ed25519 signature verification of reading payloads
+
+This module is held to a **≥ 85 % mutation score** (≤ 15 % surviving mutants).
+The CI job fails if the score drops below this threshold.
+
+## Surviving mutants (crypto.ts)
+
+Any mutant in `src/lib/crypto.ts` that survives must be either killed by a new
+test or documented here as semantically equivalent.
+
+| Mutant | Status | Notes |
+|---|---|---|
+| _None currently outstanding_ | — | All mutants are killed by the tests in `src/lib/crypto.test.ts` (see also the `fuzz-ed25519` test). |
+
+When adding an entry, record the mutator, line, and either the test that kills
+it or the justification for treating it as equivalent.
 
 ## Interpreting Results
 

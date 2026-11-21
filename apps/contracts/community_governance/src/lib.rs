@@ -1727,6 +1727,192 @@ mod tests {
         assert_eq!(p.yes_votes, 2);
     }
 
+    // ── storage key collision regression tests (issue #752) ──────────────────
+
+    /// Regression tests asserting that proposal storage keys and voter-bitmap
+    /// keys occupy disjoint storage namespaces.
+    ///
+    /// Proposal state lives in the *instance* ledger under `DataKey::Proposals`
+    /// (a `Map<u32, Proposal>`), while voter bits live in *persistent* storage
+    /// under the tuple key `(symbol_short!("bitmap"), proposal_id, word_index)`.
+    /// These tests pin that separation so a future key redefinition (e.g. moving
+    /// proposals to a `(symbol_short!("bitmap"), ...)` key, or changing the
+    /// bitmap key shape) is caught immediately.
+    mod storage_key_collision_tests {
+        use super::*;
+        use soroban_sdk::{
+            testutils::{Address as _, Ledger},
+            Env, String,
+        };
+
+        fn setup() -> (Env, Address, CommunityGovernanceClient<'static>) {
+            let env = Env::default();
+            env.mock_all_auths();
+            let id = env.register(CommunityGovernance, ());
+            let client = CommunityGovernanceClient::new(&env, &id);
+            let admin = Address::generate(&env);
+            client.initialize(&admin, &100_u32, &100_u32);
+            (env, admin, client)
+        }
+
+        /// The bitmap key must be a 3-tuple `(Symbol, u32, u32)` and must not
+        /// share its leading symbol with any instance `DataKey` variant.
+        #[test]
+        fn test_bitmap_key_shape_is_distinct_from_proposal_keys() {
+            let env = Env::default();
+            let k = bitmap_key(1, 0);
+            // Leading component is the dedicated "bitmap" symbol.
+            assert_eq!(k.0, symbol_short!("bitmap"));
+            // Proposal state is keyed by DataKey::Proposals, never by the
+            // bitmap tuple.  Verify the two keys serialise differently.
+            let proposal_key = DataKey::Proposals;
+            let bitmap_val = soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&k, &env);
+            let proposal_val =
+                soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&proposal_key, &env);
+            assert_ne!(
+                bitmap_val, proposal_val,
+                "bitmap key must not collide with DataKey::Proposals"
+            );
+        }
+
+        /// Different proposal_ids must produce distinct bitmap keys.
+        #[test]
+        fn test_bitmap_keys_differ_across_proposal_ids() {
+            let env = Env::default();
+            let k1 = bitmap_key(1, 0);
+            let k2 = bitmap_key(2, 0);
+            let v1 = soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&k1, &env);
+            let v2 = soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&k2, &env);
+            assert_ne!(v1, v2, "bitmap keys for different proposals must differ");
+        }
+
+        /// Different word indices within the same proposal must produce
+        /// distinct bitmap keys.
+        #[test]
+        fn test_bitmap_keys_differ_across_word_indices() {
+            let env = Env::default();
+            let k0 = bitmap_key(7, 0);
+            let k1 = bitmap_key(7, 1);
+            let v0 = soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&k0, &env);
+            let v1 = soroban_sdk::IntoVal::<Env, soroban_sdk::Val>::into_val(&k1, &env);
+            assert_ne!(v0, v1, "bitmap keys for different words must differ");
+        }
+
+        /// Writing a new proposal must not clobber existing voter bitmap state.
+        #[test]
+        fn test_proposal_write_does_not_clobber_bitmap() {
+            let (env, _admin, client) = setup();
+            let proposer = Address::generate(&env);
+            let voter = Address::generate(&env);
+
+            // Create proposal #1 and record a vote (sets a bitmap bit).
+            let pid1 = client.propose(
+                &proposer,
+                &String::from_str(&env, "First"),
+                &String::from_str(&env, "D"),
+            );
+            client.vote(&voter, &pid1, &true);
+
+            // The voter's bit for proposal #1 must be set.
+            let idx = env.as_contract(&client.address, || {
+                voter_index(&env, &voter)
+            });
+            assert!(
+                env.as_contract(&client.address, || bitmap_get(&env, pid1, idx)),
+                "bitmap bit must be set after voting"
+            );
+
+            // Create a second proposal — this writes DataKey::Proposals and
+            // DataKey::ProposalCount but must leave the bitmap untouched.
+            let pid2 = client.propose(
+                &proposer,
+                &String::from_str(&env, "Second"),
+                &String::from_str(&env, "D"),
+            );
+            assert_ne!(pid1, pid2);
+
+            // Bitmap state for proposal #1 must be intact.
+            assert!(
+                env.as_contract(&client.address, || bitmap_get(&env, pid1, idx)),
+                "proposal write must not clobber voter bitmap state"
+            );
+            // And the voter must still be rejected on a second vote for #1.
+            assert_eq!(
+                client.try_vote(&voter, &pid1, &true).unwrap_err().unwrap(),
+                ContractError::AlreadyVoted
+            );
+        }
+
+        /// Bitmap state for one proposal must not leak into another proposal's
+        /// bitmap (i.e. keys are namespaced by proposal_id).
+        #[test]
+        fn test_bitmap_state_isolated_per_proposal() {
+            let (env, _admin, client) = setup();
+            let proposer = Address::generate(&env);
+            let voter = Address::generate(&env);
+
+            let pid1 = client.propose(
+                &proposer,
+                &String::from_str(&env, "A"),
+                &String::from_str(&env, "D"),
+            );
+            let pid2 = client.propose(
+                &proposer,
+                &String::from_str(&env, "B"),
+                &String::from_str(&env, "D"),
+            );
+
+            // Vote only on proposal #1.
+            client.vote(&voter, &pid1, &true);
+
+            let idx = env.as_contract(&client.address, || voter_index(&env, &voter));
+            assert!(env.as_contract(&client.address, || bitmap_get(&env, pid1, idx)));
+            assert!(
+                !env.as_contract(&client.address, || bitmap_get(&env, pid2, idx)),
+                "vote on proposal #1 must not set the bit for proposal #2"
+            );
+
+            // The same voter can still vote on proposal #2.
+            client.vote(&voter, &pid2, &true);
+            assert!(env.as_contract(&client.address, || bitmap_get(&env, pid2, idx)));
+        }
+
+        /// The bitmap lives in persistent storage, not instance storage; a
+        /// proposal write (instance) therefore cannot overwrite it.
+        #[test]
+        fn test_bitmap_stored_in_persistent_not_instance() {
+            let (env, _admin, client) = setup();
+            let proposer = Address::generate(&env);
+            let voter = Address::generate(&env);
+
+            let pid = client.propose(
+                &proposer,
+                &String::from_str(&env, "P"),
+                &String::from_str(&env, "D"),
+            );
+            client.vote(&voter, &pid, &true);
+
+            let idx = env.as_contract(&client.address, || voter_index(&env, &voter));
+            let word_idx = idx / 128;
+            let key = bitmap_key(pid, word_idx);
+
+            // Present in persistent storage.
+            let persistent: Option<u128> = env.as_contract(&client.address, || {
+                env.storage().persistent().get(&key)
+            });
+            assert!(persistent.is_some(), "bitmap word must be in persistent storage");
+
+            // Absent from instance storage under the same key.
+            let instance: Option<u128> = env.as_contract(&client.address, || {
+                env.storage().instance().get(&key)
+            });
+            assert!(
+                instance.is_none(),
+                "bitmap key must not be written to instance storage"
+            );
+        }
+    }
+
     /// A voter with zero token balance still gets weight 1 (or 0 when capped?).
     /// Weight is clamped to max(0, balance).min(cap).
     /// When balance=0, weight=0 but that means the vote registers with 0 weight.

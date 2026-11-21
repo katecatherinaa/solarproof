@@ -15,3 +15,12 @@ target/
 coverage/
 *.flamegraph.html
 reports/
+
+# Playwright
+test-results/
+playwright-report/
+
+# Playwright OS-specific visual snapshots (baselines without suffix stay tracked)
+apps/web/e2e/**/__screenshots__/**/*-darwin.png
+apps/web/e2e/**/__screenshots__/**/*-linux.png
+apps/web/e2e/**/__screenshots__/**/*-win32.png

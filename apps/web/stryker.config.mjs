@@ -6,10 +6,15 @@ const config = {
   mutate: [
     'src/app/api/verify/route.ts',
     'src/app/api/audit-log/route.ts',
+    // crypto.ts targeted per issue #746 so mutations in computeReadingHash()
+    // and verifyReadingSignature() are detected.
+    'src/lib/crypto.ts',
   ],
   // Thresholds raised from 70/50/40 to 90/90/90 per issue #97.
   // Goal: < 10% surviving mutants across critical modules
-  // (verify API route, audit-log route).
+  // (verify API route, audit-log route, crypto module).
+  // The 90/90/90 thresholds also satisfy the >= 85% mutation score
+  // requirement for crypto.ts per issue #746.
   thresholds: { high: 90, low: 90, break: 90 },
   reporters: ['html', 'progress', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },

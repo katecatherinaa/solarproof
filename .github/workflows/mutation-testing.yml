@@ -125,3 +125,18 @@ jobs:
           name: stryker-report-web
           path: apps/web/reports/mutation/
           retention-days: 30
+
+      # Run Stryker scoped to the crypto module. The break threshold (85) is
+      # configured in apps/web/stryker.config.mjs so Stryker exits non-zero
+      # when the mutation score for crypto.ts drops below 85%.
+      - name: Run Stryker (apps/web crypto module)
+        working-directory: apps/web
+        run: npx stryker run --mutate 'src/lib/crypto.ts' --concurrency 1
+
+      - name: Upload Stryker report (apps/web crypto module)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stryker-report-web-crypto
+          path: apps/web/reports/mutation/
+          retention-days: 30

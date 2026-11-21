@@ -1461,3 +1461,186 @@ mod storage_cost_tests;
 
 #[cfg(test)]
 mod option_none_edge_cases_test;
+
+#[cfg(test)]
+mod storage_key_collision_tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env, IntoVal, TryIntoVal, Val};
+
+    /// Returns the balance storage key used by the contract for `account`.
+    fn balance_key(env: &Env, account: &Address) -> Val {
+        (symbol_short!("balance"), account.clone()).into_val(env)
+    }
+
+    /// Returns the allowance storage key used by the contract for `(from, spender)`.
+    fn allowance_key(env: &Env, from: &Address, spender: &Address) -> Val {
+        DataKey::Allowance(from.clone(), spender.clone()).into_val(env)
+    }
+
+    /// The balance key for address A must not collide with the Allowance key
+    /// for the same address A (with any spender).
+    #[test]
+    fn test_balance_key_does_not_collide_with_allowance_key() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let spender = Address::generate(&env);
+
+        let bal_key = balance_key(&env, &a);
+        let allow_key = allowance_key(&env, &a, &spender);
+
+        assert_ne!(
+            bal_key, allow_key,
+            "balance key for A collides with Allowance(A, spender)"
+        );
+
+        // Also check the self-allowance case: Allowance(A, A).
+        let self_allow_key = allowance_key(&env, &a, &a);
+        assert_ne!(
+            bal_key, self_allow_key,
+            "balance key for A collides with Allowance(A, A)"
+        );
+    }
+
+    /// Allowance(A, B) must not collide with Allowance(B, A).
+    #[test]
+    fn test_allowance_key_is_directional() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+
+        let ab = allowance_key(&env, &a, &b);
+        let ba = allowance_key(&env, &b, &a);
+
+        assert_ne!(ab, ba, "Allowance(A, B) collides with Allowance(B, A)");
+    }
+
+    /// Allowance keys for distinct spender pairs must all be distinct.
+    #[test]
+    fn test_allowance_keys_distinct_across_pairs() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        let keys = [
+            allowance_key(&env, &a, &b),
+            allowance_key(&env, &a, &c),
+            allowance_key(&env, &b, &a),
+            allowance_key(&env, &b, &c),
+            allowance_key(&env, &c, &a),
+            allowance_key(&env, &c, &b),
+        ];
+
+        for i in 0..keys.len() {
+            for j in (i + 1)..keys.len() {
+                assert_ne!(keys[i], keys[j], "allowance keys {i} and {j} collide");
+            }
+        }
+    }
+
+    /// Balance keys for distinct addresses must be distinct.
+    #[test]
+    fn test_balance_keys_distinct_across_addresses() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+
+        assert_ne!(balance_key(&env, &a), balance_key(&env, &b));
+    }
+
+    /// Writing a balance must not overwrite an existing allowance entry, and
+    /// vice versa. This exercises the real contract storage paths end-to-end.
+    #[test]
+    fn test_balance_write_does_not_overwrite_allowance() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register(EnergyToken, ());
+        let client = EnergyTokenClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        let minter = Address::generate(&env);
+        client.initialize(&admin, &minter);
+
+        let owner = Address::generate(&env);
+        let spender = Address::generate(&env);
+
+        // Set an allowance first.
+        client.approve(&owner, &spender, &777_i128, &1000_u32);
+        assert_eq!(client.allowance(&owner, &spender), 777_i128);
+
+        // Now write a balance for the same owner.
+        client.mint(&owner, &1_000_i128);
+        assert_eq!(client.balance(&owner), 1_000_i128);
+
+        // The allowance must be untouched by the balance write.
+        assert_eq!(
+            client.allowance(&owner, &spender),
+            777_i128,
+            "balance write clobbered the allowance entry"
+        );
+
+        // And the balance must be untouched by a subsequent allowance write.
+        client.approve(&owner, &spender, &123_i128, &1000_u32);
+        assert_eq!(client.balance(&owner), 1_000_i128);
+        assert_eq!(client.allowance(&owner, &spender), 123_i128);
+    }
+
+    /// Raw storage-level check: setting a balance key directly does not affect
+    /// the value stored under the Allowance key for the same address.
+    #[test]
+    fn test_raw_storage_balance_and_allowance_are_independent() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let spender = Address::generate(&env);
+
+        let bal_key = balance_key(&env, &a);
+        let allow_key = allowance_key(&env, &a, &spender);
+
+        env.storage().persistent().set(&bal_key, &42_i128);
+        env.storage().persistent().set(&allow_key, &99_i128);
+
+        let stored_bal: i128 = env.storage().persistent().get(&bal_key).unwrap();
+        let stored_allow: i128 = env.storage().persistent().get(&allow_key).unwrap();
+
+        assert_eq!(stored_bal, 42_i128);
+        assert_eq!(stored_allow, 99_i128);
+
+        // Overwriting the balance must leave the allowance intact.
+        env.storage().persistent().set(&bal_key, &7_i128);
+        let stored_allow_after: i128 = env.storage().persistent().get(&allow_key).unwrap();
+        assert_eq!(stored_allow_after, 99_i128);
+    }
+
+    /// The `Retired` key for an address must not collide with the balance key
+    /// or the Allowance key for that address.
+    #[test]
+    fn test_retired_key_does_not_collide() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let spender = Address::generate(&env);
+
+        let retired_key: Val = DataKey::Retired(a.clone()).into_val(&env);
+
+        assert_ne!(retired_key, balance_key(&env, &a));
+        assert_ne!(retired_key, allowance_key(&env, &a, &spender));
+        assert_ne!(retired_key, allowance_key(&env, &a, &a));
+    }
+
+    /// Sanity check that the key encodings round-trip through the SDK so the
+    /// inequality assertions above are meaningful (not comparing opaque noise).
+    #[test]
+    fn test_key_encoding_round_trips() {
+        let env = Env::default();
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+
+        let allow_key = allowance_key(&env, &a, &b);
+        let decoded: DataKey = allow_key.try_into_val(&env).unwrap();
+        match decoded {
+            DataKey::Allowance(from, spender) => {
+                assert_eq!(from, a);
+                assert_eq!(spender, b);
+            }
+            _ => panic!("allowance key did not decode to DataKey::Allowance"),
+        }
+    }
+}

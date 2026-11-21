@@ -5,7 +5,11 @@ export default defineConfig({
   timeout: 30000,
   expect: {
     timeout: 5000,
+    toHaveScreenshot: {
+      maxDiffPixelRatio: 0.01,
+    },
   },
+  snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}{ext}',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
