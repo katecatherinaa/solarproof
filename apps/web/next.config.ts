@@ -28,21 +28,16 @@ const securityHeaders = [
     key: 'Permissions-Policy',
     value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
   },
-  {
-    // Enforce mode (not Report-Only) in all environments.
-    // Violations are POSTed to /api/csp-report which forwards them to Sentry.
-    key: 'Content-Security-Policy',
-    value: [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
-      "font-src 'self'",
-      "connect-src 'self' https://*.supabase.co https://soroban-testnet.stellar.org https://soroban.stellar.org wss://*.supabase.co",
-      "frame-ancestors 'none'",
-      "report-uri /api/csp-report",
-    ].join('; '),
-  },
+  // NOTE: The Content-Security-Policy header is intentionally NOT set here.
+  // A per-request nonce must be generated for each request, which is not
+  // possible from a static `headers()` config. The CSP (including
+  // `script-src 'self' 'nonce-{value}' 'strict-dynamic'`) is emitted by
+  // `src/middleware.ts`, which also forwards the nonce to the app via the
+  // `x-nonce` request header so inline scripts (Next.js hydration and the
+  // Sentry loader) can be tagged with it. Setting a second CSP header here
+  // would conflict with the middleware-generated one and cause the browser
+  // to enforce the intersection of both policies, breaking hydration.
+  // See SECURITY.md for the full policy.
 ]
 
 const nextConfig: NextConfig = {

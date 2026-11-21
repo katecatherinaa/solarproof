@@ -30,9 +30,19 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const locale = await getLocale()
   const messages = await getMessages()
+  const nonce = (await headers()).get('x-nonce') ?? undefined
 
   return (
     <html lang={locale} dir={LOCALE_DIRECTIONS[locale as Locale]} suppressHydrationWarning>
+      <head>
+        {/* Sentry bootstrap — nonce satisfies the CSP without unsafe-inline. */}
+        <script
+          nonce={nonce}
+          dangerouslySetInnerHTML={{
+            __html: `window.__solarproof_nonce__ = ${JSON.stringify(nonce ?? '')};`,
+          }}
+        />
+      </head>
       <body className={inter.className}>
         <a
           href="#main-content"

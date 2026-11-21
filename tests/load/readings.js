@@ -48,7 +48,7 @@ const requestCount = new Counter('request_count')
 const API_URL = __ENV.API_URL || 'http://localhost:3000'
 const METER_ID = __ENV.METER_ID || '00000000-0000-0000-0000-000000000001'
 const API_KEY = __ENV.API_KEY || 'mk_placeholder_key'
-// Set SCENARIO=baseline (default) or SCENARIO=breakpoint
+// Set SCENARIO=baseline (default), SCENARIO=breakpoint or SCENARIO=regression
 const SCENARIO = __ENV.SCENARIO || 'baseline'
 
 // ---------------------------------------------------------------------------
@@ -61,6 +61,19 @@ const baselineScenario = {
     executor: 'constant-vus',
     vus: 100,
     duration: '60s',
+  },
+}
+
+/**
+ * Regression: focused hot-path test for POST /api/readings (issue #758).
+ * 100 VUs continuously submit valid readings for 30 s.
+ * Acceptance: p95 < 300 ms, error rate < 0.1 %.
+ */
+const regressionScenario = {
+  readings_regression: {
+    executor: 'constant-vus',
+    vus: 100,
+    duration: '30s',
   },
 }
 
@@ -97,9 +110,25 @@ const thresholds = {
   'http_req_failed': ['rate<0.05'],
 }
 
+/** Tighter thresholds for the focused regression scenario (issue #758). */
+const regressionThresholds = {
+  // Acceptance criterion: p95 response time < 300 ms
+  'reading_duration_ms': ['p(95)<300'],
+  // Error rate must stay below 0.1 %
+  'error_rate': ['rate<0.001'],
+  // k6 built-in; consistent with error_rate above
+  'http_req_failed': ['rate<0.001'],
+}
+
+function selectScenario() {
+  if (SCENARIO === 'breakpoint') return breakpointScenario
+  if (SCENARIO === 'regression') return regressionScenario
+  return baselineScenario
+}
+
 export const options = {
-  scenarios: SCENARIO === 'breakpoint' ? breakpointScenario : baselineScenario,
-  thresholds,
+  scenarios: selectScenario(),
+  thresholds: SCENARIO === 'regression' ? regressionThresholds : thresholds,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,12 +208,18 @@ export function handleSummary(data) {
   console.log(`║  Error rate      : ${(typeof errs === 'number' ? errs.toFixed(2) + ' %' : errs).padEnd(18)}║`)
   console.log('╚══════════════════════════════════════╝\n')
 
-  const passedP95 = typeof p95 === 'number' && p95 < 500
+  const p95Limit = SCENARIO === 'regression' ? 300 : 500
+  const passedP95 = typeof p95 === 'number' && p95 < p95Limit
   console.log(passedP95
-    ? '✅ PASSED — p95 < 500 ms (acceptance criterion met)'
-    : '❌ FAILED — p95 ≥ 500 ms (acceptance criterion NOT met)')
+    ? `✅ PASSED — p95 < ${p95Limit} ms (acceptance criterion met)`
+    : `❌ FAILED — p95 ≥ ${p95Limit} ms (acceptance criterion NOT met)`)
+
+  // Write the summary JSON to a file so CI can archive it as an artifact
+  // and parse thresholds/results (see .github/workflows/load-test.yml).
+  const summaryPath = __ENV.SUMMARY_PATH || `load-summary-${SCENARIO}.json`
 
   return {
     stdout: JSON.stringify(data, null, 2),
+    [summaryPath]: JSON.stringify(data, null, 2),
   }
 }

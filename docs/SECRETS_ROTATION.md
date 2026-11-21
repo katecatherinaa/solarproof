@@ -48,6 +48,37 @@ Acceptance Criteria
 - Where supported, use short-lived credentials (STS) and rotating tokens via a secrets manager.
 - Document the rotation schedule and automate via CI jobs that update secrets and trigger a verification pipeline.
 
+6.1 `SUPABASE_SERVICE_ROLE_KEY` — 90-day rotation
+
+The `SUPABASE_SERVICE_ROLE_KEY` is a long-lived credential that bypasses Row Level Security (RLS). It must be rotated every **90 days** (or immediately on suspected compromise, see §7) and scoped to the minimum permissions required by the backend service. See `docs/SECRETS.md` for where this key is stored and consumed.
+
+**Rotation procedure (no downtime):**
+
+1. **Create the new key** — in the Supabase dashboard, generate a new service role key (or a scoped API key with the minimum required permissions). Store it in the secrets manager under a temporary name (e.g., `SUPABASE_SERVICE_ROLE_KEY_v2`). Do not overwrite the current key yet.
+2. **Dual-accept window** — deploy configuration so consumers accept both the old and new keys (e.g., the backend reads `SUPABASE_SERVICE_ROLE_KEY` and falls back to `SUPABASE_SERVICE_ROLE_KEY_v2`, or the secrets manager serves both versions). Verify the new key works end-to-end before proceeding.
+3. **Switch consumers** — update all consumers (CI/CD workflows, hosted services, backend jobs) to use the new key as the canonical `SUPABASE_SERVICE_ROLE_KEY`. Confirm health checks and integration tests pass.
+4. **Revoke the old key** — after a cool-down window (minimum 24 hours) with no errors, revoke the old key in Supabase and remove it from the secrets manager and GitHub secrets.
+5. **Record the rotation** — write an audit log entry (see below) and update the `updated_at` timestamp used by the reminder workflow.
+
+**Testing the procedure:**
+
+- Run the rotation in a staging environment first using the same steps above.
+- Confirm the dual-accept window works by exercising a request with each key version.
+- Run the verification pipeline (`.github/workflows/secrets-rotation-reminder.yml` with `dry_run=true`, plus the standard CI suite) to confirm consumers resolve the new key.
+- Verify the old key is rejected after revocation (expect `401`/`403` from Supabase).
+
+**Expiry alerting:**
+
+- The `.github/workflows/secrets-rotation-reminder.yml` job compares the key's `updated_at` against the 90-day max age and opens a GitHub issue when it is exceeded.
+- An additional warning issue is created when the key is within **14 days** of its 90-day expiry, so rotation can be scheduled before it lapses.
+- Alerts are routed to the `backend-team` owner listed in §8.
+
+**Audit log:**
+
+- Every rotation must create an audit log entry recording: the secret name, the rotation timestamp, the operator, the old key version (never the key value), and the new key version.
+- Audit entries are retained per the incident/audit policy and referenced in the rotation issue.
+=======
+
 7. Compromised Credential Handling
 
 - Immediate actions:
@@ -62,7 +93,7 @@ Acceptance Criteria
 
 | Secret | Max Age | Owner | Procedure |
 |--------|---------|-------|-----------|
-| `SUPABASE_SERVICE_ROLE_KEY` | 90 days | backend-team | §4 GitHub Secrets |
+| `SUPABASE_SERVICE_ROLE_KEY` | 90 days | backend-team | §6.1 Service Role Credentials |
 | `MINTER_SECRET_KEY` | 180 days | contracts-team | §5 Stellar Keys |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | 365 days | backend-team | §4 GitHub Secrets |
 | `STELLAR_TESTNET_SECRET_KEY` | 180 days | contracts-team | §5 Stellar Keys |
@@ -89,6 +120,7 @@ The `secret-scanning.yml` workflow runs Gitleaks on every push and pull request 
 
 10. References
 - See `docs/DEPLOYMENT.md` and repository CI config for current secret usage patterns.
+- Secret storage and consumption map: `docs/SECRETS.md`
 - Automation workflow: `.github/workflows/secrets-rotation-reminder.yml`
 - Secret scanning workflow: `.github/workflows/secret-scanning.yml`
 

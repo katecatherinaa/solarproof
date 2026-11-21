@@ -23,9 +23,38 @@ import { createClient } from '@supabase/supabase-js'
 
 const ROTATION_GRACE_MS = 24 * 60 * 60 * 1000 // 24 hours
 
+/**
+ * Service-role credentials are long-lived and bypass RLS, so they must be
+ * rotated on a fixed schedule. Alerting fires once the credential is within
+ * SERVICE_ROLE_ALERT_WINDOW_MS of its expiry.
+ */
+export const SERVICE_ROLE_ROTATION_INTERVAL_MS = 90 * 24 * 60 * 60 * 1000 // 90 days
+export const SERVICE_ROLE_ALERT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000 // 14 days
+
 interface SecretPayload {
   key: string
   rotatedAt: string
+}
+
+export interface ServiceRoleRotationMeta {
+  /** Identifier/version of the credential being replaced. */
+  oldKeyVersion: string
+  /** Identifier/version of the newly issued credential. */
+  newKeyVersion: string
+  /** Who (or what) performed the rotation. */
+  actor: string
+  /** ISO-8601 timestamp of the rotation. Defaults to now. */
+  rotatedAt?: string
+}
+
+export interface ServiceRoleCredentialStatus {
+  keyVersion: string
+  rotatedAt: string
+  expiresAt: string
+  ageMs: number
+  msUntilExpiry: number
+  /** True once the credential is inside the alerting window (or already expired). */
+  approachingExpiry: boolean
 }
 
 const smClient = new SecretsManagerClient({
@@ -52,6 +81,48 @@ async function auditLog(event: string, meta: Record<string, unknown>) {
   } catch {
     // audit failures must never break the hot path
     console.error('[secrets] audit log write failed', { event })
+  }
+}
+
+/**
+ * Records a service-role credential rotation in the audit log.
+ * Failures are non-fatal (see auditLog) so rotation is never blocked by
+ * an audit outage.
+ */
+export async function recordServiceRoleRotation(
+  meta: ServiceRoleRotationMeta,
+): Promise<void> {
+  const rotatedAt = meta.rotatedAt ?? new Date().toISOString()
+  await auditLog('service_role_key_rotated', {
+    oldKeyVersion: meta.oldKeyVersion,
+    newKeyVersion: meta.newKeyVersion,
+    actor: meta.actor,
+    rotatedAt,
+    expiresAt: new Date(
+      new Date(rotatedAt).getTime() + SERVICE_ROLE_ROTATION_INTERVAL_MS,
+    ).toISOString(),
+  })
+}
+
+/**
+ * Computes rotation/expiry status for a service-role credential so alerting
+ * can detect credentials approaching expiry.
+ */
+export function getServiceRoleCredentialStatus(
+  keyVersion: string,
+  rotatedAt: string,
+  now: number = Date.now(),
+): ServiceRoleCredentialStatus {
+  const rotatedMs = new Date(rotatedAt).getTime()
+  const expiresMs = rotatedMs + SERVICE_ROLE_ROTATION_INTERVAL_MS
+  const msUntilExpiry = expiresMs - now
+  return {
+    keyVersion,
+    rotatedAt: new Date(rotatedMs).toISOString(),
+    expiresAt: new Date(expiresMs).toISOString(),
+    ageMs: now - rotatedMs,
+    msUntilExpiry,
+    approachingExpiry: msUntilExpiry <= SERVICE_ROLE_ALERT_WINDOW_MS,
   }
 }
 

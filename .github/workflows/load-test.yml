@@ -12,12 +12,13 @@ on:
         required: false
         default: ''
       scenario:
-        description: 'Test scenario: baseline (100 VUs, p95 < 500ms) or breakpoint (ramp to breaking point)'
+        description: 'Test scenario: baseline (100 VUs, p95 < 500ms), regression (100 VUs, 30s, p95 < 300ms) or breakpoint (ramp to breaking point)'
         required: false
         default: 'baseline'
         type: choice
         options:
           - baseline
+          - regression
           - breakpoint
   schedule:
     # Nightly run against staging for automated P95 regression detection
@@ -30,6 +31,9 @@ env:
   P95_BASELINE_MS: 2000
   # Regression threshold: fail if P95 exceeds baseline by more than 20%
   P95_REGRESSION_PERCENT: 20
+  # Focused regression scenario thresholds (POST /api/readings, 100 VUs, 30s)
+  REGRESSION_P95_MAX_MS: 300
+  REGRESSION_ERROR_RATE_MAX_PERCENT: 0.1
 
 jobs:
   verify-rate-limit:
@@ -224,6 +228,147 @@ jobs:
           name: k6-results-${{ github.event.inputs.scenario || 'baseline' }}-${{ github.run_id }}
           path: |
             k6-summary.json
+            '*.json'
+          if-no-files-found: ignore
+          retention-days: 30
+
+  regression-test:
+    name: k6 regression test (POST /api/readings, 100 VUs, 30s)
+    runs-on: ubuntu-latest
+    # Runs on the nightly schedule and on manual dispatch (any scenario) so the
+    # focused hot-path regression check always has a result to compare against.
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * *'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+
+      - name: Run regression scenario
+        id: run_regression
+        run: |
+          # k6 thresholds (p95 < 300ms, error rate < 0.1%) make k6 exit non-zero
+          # on violation; capture the exit code so we can still parse/upload the
+          # summary and report a precise failure below.
+          set +e
+          k6 run tests/load/readings.js \
+            -e API_URL=${{ github.event.inputs.api_url || 'https://solarproof-staging.vercel.app' }} \
+            -e METER_ID=${{ github.event.inputs.meter_id || '00000000-0000-0000-0000-000000000001' }} \
+            -e SCENARIO=regression \
+            --summary-export=regression-summary.json
+          K6_EXIT=$?
+          set -e
+          echo "k6_exit_code=${K6_EXIT}" >> "$GITHUB_OUTPUT"
+          echo "k6 exited with code ${K6_EXIT}"
+
+      - name: Enforce regression thresholds
+        id: enforce_regression
+        run: |
+          P95=$(python3 -c "
+          import json, sys
+          try:
+              with open('regression-summary.json') as f:
+                  data = json.load(f)
+              metrics = data.get('metrics', {})
+              p95 = (
+                  metrics.get('reading_duration_ms', {}).get('p(95)')
+                  or metrics.get('http_req_duration', {}).get('p(95)')
+              )
+              if p95 is None:
+                  print('N/A')
+                  sys.exit(0)
+              print(f'{p95:.0f}')
+          except Exception as e:
+              print(f'ERROR: {e}', file=sys.stderr)
+              print('N/A')
+          " 2>&1)
+
+          ERROR_RATE=$(python3 -c "
+          import json, sys
+          try:
+              with open('regression-summary.json') as f:
+                  data = json.load(f)
+              metrics = data.get('metrics', {})
+              rate = metrics.get('http_req_failed', {}).get('value')
+              if rate is None:
+                  print('N/A')
+                  sys.exit(0)
+              print(f'{rate * 100:.4f}')
+          except Exception as e:
+              print(f'ERROR: {e}', file=sys.stderr)
+              print('N/A')
+          " 2>&1)
+
+          echo "p95_ms=${P95}" >> "$GITHUB_OUTPUT"
+          echo "error_rate_percent=${ERROR_RATE}" >> "$GITHUB_OUTPUT"
+
+          MAX_P95=${{ env.REGRESSION_P95_MAX_MS }}
+          MAX_ERR=${{ env.REGRESSION_ERROR_RATE_MAX_PERCENT }}
+          FAILED=0
+
+          if [ "$P95" = "N/A" ] || [ "$P95" = "" ]; then
+            echo "::error::Could not parse P95 from regression summary — cannot confirm p95 < ${MAX_P95}ms"
+            FAILED=1
+          elif [ "$P95" -ge "$MAX_P95" ]; then
+            echo "::error::P95 regression: ${P95}ms >= ${MAX_P95}ms threshold"
+            FAILED=1
+          else
+            echo "✅ P95 within threshold: ${P95}ms < ${MAX_P95}ms"
+          fi
+
+          if [ "$ERROR_RATE" = "N/A" ] || [ "$ERROR_RATE" = "" ]; then
+            echo "::error::Could not parse error rate from regression summary — cannot confirm error rate < ${MAX_ERR}%"
+            FAILED=1
+          elif python3 -c "import sys; sys.exit(0 if float('$ERROR_RATE') >= float('$MAX_ERR') else 1)"; then
+            echo "::error::Error rate regression: ${ERROR_RATE}% >= ${MAX_ERR}% threshold"
+            FAILED=1
+          else
+            echo "✅ Error rate within threshold: ${ERROR_RATE}% < ${MAX_ERR}%"
+          fi
+
+          if [ "${{ steps.run_regression.outputs.k6_exit_code }}" != "0" ]; then
+            echo "::error::k6 reported threshold violations (exit code ${{ steps.run_regression.outputs.k6_exit_code }})"
+            FAILED=1
+          fi
+
+          if [ "$FAILED" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Add Regression Summary
+        if: always()
+        run: |
+          P95="${{ steps.enforce_regression.outputs.p95_ms }}"
+          ERROR_RATE="${{ steps.enforce_regression.outputs.error_rate_percent }}"
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## k6 Regression Test — POST /api/readings
+
+          | Metric | Value | Threshold |
+          |---|---|---|
+          | Target | ${{ github.event.inputs.api_url || 'https://solarproof-staging.vercel.app' }} | — |
+          | Virtual users | 100 (30 s continuous) | — |
+          | P95 Latency | ${P95:-N/A} ms | < ${{ env.REGRESSION_P95_MAX_MS }} ms |
+          | Error Rate | ${ERROR_RATE:-N/A} % | < ${{ env.REGRESSION_ERROR_RATE_MAX_PERCENT }} % |
+          | k6 exit code | ${{ steps.run_regression.outputs.k6_exit_code }} | 0 |
+
+          > Baseline documented in [docs/PERFORMANCE_BASELINE.md](../../docs/PERFORMANCE_BASELINE.md).
+          EOF
+
+      - name: Upload regression results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-regression-results-${{ github.run_id }}
+          path: |
+            regression-summary.json
             '*.json'
           if-no-files-found: ignore
           retention-days: 30

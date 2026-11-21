@@ -115,4 +115,108 @@ describe('getCorsHeaders', () => {
     expect(() => getCorsHeaders(DEV_ORIGIN)).not.toThrow()
     expect(getCorsHeaders(DEV_ORIGIN)).not.toBeNull()
   })
+
+  it('sets credentials mode on allowed origins', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    const headers = getCorsHeaders(PROD_ORIGIN)!
+    expect(headers['Access-Control-Allow-Credentials']).toBe('true')
+  })
+
+  it('exposes the expected allowed methods', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    const methods = getCorsHeaders(PROD_ORIGIN)!['Access-Control-Allow-Methods']
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      expect(methods).toContain(method)
+    }
+  })
+
+  it('exposes the expected allowed headers', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { getCorsHeaders } = await import('./cors')
+    const headers = getCorsHeaders(PROD_ORIGIN)!
+    expect(headers['Access-Control-Allow-Headers']).toContain('Content-Type')
+    expect(headers['Access-Control-Allow-Headers']).toContain('Authorization')
+  })
+})
+
+describe('CORS middleware', () => {
+  const PROD_ORIGIN = 'https://solarproof.vercel.app'
+  const UNKNOWN_ORIGIN = 'https://evil.example.com'
+
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  function makeRequest(method: string, origin: string | null): Request {
+    const headers = new Headers()
+    if (origin !== null) headers.set('origin', origin)
+    return new Request('https://api.solarproof.vercel.app/api/analyze', {
+      method,
+      headers,
+    })
+  }
+
+  it('answers preflight OPTIONS with the correct allowed methods', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { handleCors } = await import('./cors')
+    const response = handleCors(makeRequest('OPTIONS', PROD_ORIGIN))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(204)
+    expect(response!.headers.get('Access-Control-Allow-Origin')).toBe(PROD_ORIGIN)
+    const methods = response!.headers.get('Access-Control-Allow-Methods') ?? ''
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      expect(methods).toContain(method)
+    }
+    expect(response!.headers.get('Access-Control-Allow-Credentials')).toBe('true')
+  })
+
+  it('sets credentials header on preflight responses', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { handleCors } = await import('./cors')
+    const response = handleCors(makeRequest('OPTIONS', PROD_ORIGIN))
+    expect(response!.headers.get('Access-Control-Allow-Credentials')).toBe('true')
+  })
+
+  it('returns 403 for an unlisted origin', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { handleCors } = await import('./cors')
+    const response = handleCors(makeRequest('GET', UNKNOWN_ORIGIN))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(403)
+  })
+
+  it('returns 403 for an unlisted origin on preflight', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { handleCors } = await import('./cors')
+    const response = handleCors(makeRequest('OPTIONS', UNKNOWN_ORIGIN))
+    expect(response).not.toBeNull()
+    expect(response!.status).toBe(403)
+  })
+
+  it('passes through requests without an origin', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { handleCors } = await import('./cors')
+    expect(handleCors(makeRequest('GET', null))).toBeNull()
+  })
+
+  it('passes through allowed non-preflight requests', async () => {
+    vi.stubEnv('CORS_ALLOWED_ORIGINS', PROD_ORIGIN)
+    vi.stubEnv('NODE_ENV', 'production')
+    const { handleCors } = await import('./cors')
+    expect(handleCors(makeRequest('POST', PROD_ORIGIN))).toBeNull()
+  })
 })

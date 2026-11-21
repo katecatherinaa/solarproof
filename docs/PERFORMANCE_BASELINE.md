@@ -134,6 +134,74 @@ _Update this table after each region or replica change._
 
 `deploy-production.yml` requires **no changes**: region configuration is declarative in `vercel.json` and applied by the existing Vercel deploy step. The pipeline remains single-workflow, single-promotion; multi-region is a deployment target property, not a pipeline stage.
 
+## Focused regression baseline — POST /api/readings (Issue #758)
+
+A focused performance regression test targets the reading submission hot path so that
+regressions are caught earlier than the broad nightly scenario allows.
+
+### Test configuration
+
+| Parameter | Value |
+|---|---|
+| Tool | [k6](https://k6.io) |
+| Script | `tests/load/readings.js` (scenario: `readings_regression`) |
+| Concurrent VUs | 100 |
+| Duration | 30 s (continuous submissions, no think time) |
+| Target | `POST /api/readings` |
+| Payload | Valid, signed reading payloads |
+
+### Acceptance thresholds
+
+| Metric | Threshold | Rationale |
+|---|---|---|
+| P95 response time | < 300 ms | Hot path must stay fast under sustained concurrent submissions |
+| Error rate | < 0.1 % | Any logic or server error under load is a regression |
+
+These thresholds are enforced by k6 `thresholds` in the scenario, so the k6 process
+exits non-zero when they are violated and the CI step fails.
+
+### Running locally
+
+```bash
+# Against localhost (app running via `pnpm dev`)
+k6 run tests/load/readings.js \
+  -e SCENARIO=readings_regression \
+  -e API_URL=http://localhost:3000
+
+# Against staging
+k6 run tests/load/readings.js \
+  -e SCENARIO=readings_regression \
+  -e API_URL=https://solarproof-staging.vercel.app \
+  -e METER_ID=<seeded-meter-uuid> \
+  -e SIGNATURE_HEX=<valid-64-byte-sig-hex>
+```
+
+### CI integration
+
+The regression scenario runs as a dedicated step in `.github/workflows/load-test.yml`
+(in addition to the broad nightly scenario):
+
+1. Runs the `readings_regression` scenario (100 VUs, 30 s)
+2. Fails the job if p95 ≥ 300 ms or error rate ≥ 0.1 %
+3. Uploads the k6 JSON summary and results as the CI artifact
+   `readings-regression-results` (30-day retention)
+4. Posts a summary table to the GitHub Actions job summary
+
+### Measured baseline
+
+> Baseline captured on: _not yet recorded — run the regression scenario and fill in below_
+
+| Metric | Result | Threshold | Pass? |
+|---|---|---|---|
+| P95 response time | — ms | < 300 ms | — |
+| P99 response time | — ms | — | — |
+| Median response time | — ms | — | — |
+| Requests/s | — | — | — |
+| Error rate | — % | < 0.1 % | — |
+| Total requests (30 s) | — | — | — |
+
+_Update this table after each significant change to the reading submission path._
+
 ## CI integration
 
 The load test runs nightly at 02:00 UTC against staging via `.github/workflows/load-test.yml`.

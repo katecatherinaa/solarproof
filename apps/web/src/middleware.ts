@@ -18,6 +18,42 @@ function isCsrfExempt(pathname: string): boolean {
   return CSRF_EXEMPT_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'))
 }
 
+/**
+ * Generates a cryptographically random, base64-encoded nonce suitable for use
+ * in a Content-Security-Policy `nonce-{value}` source expression.
+ */
+function generateCspNonce(): string {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+  return btoa(binary)
+}
+
+/**
+ * Builds the Content-Security-Policy header value for a given nonce.
+ * Inline scripts are allowed only via the per-request nonce; 'unsafe-inline'
+ * is intentionally omitted from script-src. style-src retains 'unsafe-inline'
+ * because Next.js injects inline styles that are not nonce-aware.
+ */
+function buildCspHeader(nonce: string): string {
+  const directives = [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' https://js.sentry-cdn.com https://browser.sentry-cdn.com`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'",
+    'report-uri /api/csp-report',
+  ]
+  return directives.join('; ')
+}
+
 /** Methods that carry a request body and must declare a JSON Content-Type. */
 const JSON_BODY_METHODS = ['POST', 'PUT', 'PATCH']
 
@@ -205,16 +241,24 @@ export function middleware(req: NextRequest) {
 
   // ── Correlation ID injection ──────────────────────────────────────────────
   const correlationId = req.headers.get('x-correlation-id') ?? crypto.randomUUID()
+
+  // ── CSP nonce ─────────────────────────────────────────────────────────────
+  // Generate a fresh nonce per request so inline scripts (Next.js hydration,
+  // Sentry bootstrap) can be allow-listed without 'unsafe-inline'.
+  const cspNonce = generateCspNonce()
+
   const res = NextResponse.next({
     request: {
       headers: new Headers({
         ...Object.fromEntries(req.headers),
         'x-correlation-id': correlationId,
+        'x-csp-nonce': cspNonce,
       }),
     },
   })
   res.headers.set('x-correlation-id', correlationId)
   res.headers.set('API-Version', 'v1')
+  res.headers.set('Content-Security-Policy', buildCspHeader(cspNonce))
 
   // ── Attach CORS headers ───────────────────────────────────────────────────
   if (corsHeaders) {
