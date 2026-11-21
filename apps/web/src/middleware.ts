@@ -5,6 +5,27 @@ import { checkCsrf } from '@/lib/csrf'
 export const SUPPORTED_LOCALES = ['en', 'es', 'fr', 'de', 'pt', 'pt-BR', 'ar'] as const
 export type Locale = typeof SUPPORTED_LOCALES[number]
 
+/**
+ * Sunset date for unversioned /api/ routes. Must be at least six months after
+ * the deprecation headers were introduced. Integrators should migrate to
+ * /api/v1/ before this date.
+ */
+export const API_SUNSET_DATE = '2026-12-31'
+
+/** Apply legacy-path deprecation headers to a response for an unversioned /api/ route. */
+function applyDeprecationHeaders(
+  res: NextResponse,
+  req: NextRequest,
+  canonicalUrl: URL,
+): void {
+  res.headers.set('Deprecation', 'true')
+  res.headers.set('Sunset', API_SUNSET_DATE)
+  res.headers.set('Link', `<${canonicalUrl.toString()}>; rel="successor-version"`)
+  res.headers.set('API-Version', 'v1')
+  const correlationId = req.headers.get('x-correlation-id') ?? crypto.randomUUID()
+  res.headers.set('x-correlation-id', correlationId)
+}
+
 /** API routes that are exempt from CSRF validation (machine-to-machine, no browser session). */
 const CSRF_EXEMPT_PATHS = [
   '/api/readings',       // Ed25519-signed meter submissions — no browser session
@@ -139,12 +160,7 @@ export function middleware(req: NextRequest) {
     const url = req.nextUrl.clone()
     url.pathname = `/api/v1/${unversioned[1]}`
     const redirect = NextResponse.redirect(url, { status: 301 })
-    redirect.headers.set('Deprecation', 'true')
-    redirect.headers.set('Link', `<${url.toString()}>; rel="successor-version"`)
-    redirect.headers.set('API-Version', 'v1')
-    // Propagate correlation ID on the redirect response too
-    const correlationId = req.headers.get('x-correlation-id') ?? crypto.randomUUID()
-    redirect.headers.set('x-correlation-id', correlationId)
+    applyDeprecationHeaders(redirect, req, url)
     if (corsHeaders) {
       for (const [k, v] of Object.entries(corsHeaders)) {
         redirect.headers.set(k, v)
@@ -215,6 +231,15 @@ export function middleware(req: NextRequest) {
   })
   res.headers.set('x-correlation-id', correlationId)
   res.headers.set('API-Version', 'v1')
+
+  // ── Legacy path deprecation headers ───────────────────────────────────────
+  // Any unversioned /api/ route that is served directly (rather than
+  // redirected above) still advertises its deprecation and canonical successor.
+  if (pathname.startsWith('/api/') && !/^\/api\/v\d+\//.test(pathname)) {
+    const canonicalUrl = req.nextUrl.clone()
+    canonicalUrl.pathname = `/api/v1/${pathname.slice('/api/'.length)}`
+    applyDeprecationHeaders(res, req, canonicalUrl)
+  }
 
   // ── Attach CORS headers ───────────────────────────────────────────────────
   if (corsHeaders) {

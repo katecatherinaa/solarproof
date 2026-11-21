@@ -25,6 +25,20 @@ info:
 
     All responses include an `API-Version: v1` header.
 
+    ### Deprecation
+
+    Responses served from unversioned `/api/` routes additionally include the
+    following headers so integrators can detect that they are on a legacy path:
+
+    - `Deprecation: true` — signals that the unversioned route is deprecated.
+    - `Sunset: <date>` — the date (RFC 7231 / HTTP-date) after which the
+      unversioned route may be removed. At least 6 months out.
+    - `Link: </api/v1/...>; rel="successor-version"` — points to the equivalent
+      canonical `/api/v1/` URL.
+
+    Migrate to the `/api/v1/` URL advertised in the `Link` header before the
+    `Sunset` date.
+
     ## Rate Limiting
 
     Rate limits are enforced per client. Exceeded requests receive `429 Too Many Requests`
@@ -141,6 +155,12 @@ paths:
                 type: string
             API-Version:
               $ref: '#/components/headers/ApiVersion'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
 
 paths:
   /api/auth/login:
@@ -148,6 +168,7 @@ paths:
       operationId: login
       tags: [auth]
       summary: Exchange email and password for JWT tokens
+      deprecated: true
       security: []
       requestBody:
         required: true
@@ -161,6 +182,13 @@ paths:
       responses:
         '200':
           description: Authentication successful
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -169,6 +197,13 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           description: Invalid credentials
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -181,6 +216,7 @@ paths:
       operationId: refreshToken
       tags: [auth]
       summary: Rotate refresh token and return a new token pair
+      deprecated: true
       security: []
       requestBody:
         required: true
@@ -191,6 +227,13 @@ paths:
       responses:
         '200':
           description: Token rotated successfully
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -199,6 +242,13 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           description: Invalid or expired refresh token
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -209,11 +259,19 @@ paths:
       operationId: logout
       tags: [auth]
       summary: Invalidate the current session
+      deprecated: true
       security:
         - bearerAuth: []
       responses:
         '200':
           description: Session invalidated
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -230,6 +288,7 @@ paths:
       operationId: listReadings
       tags: [readings]
       summary: List meter readings (cursor-based pagination)
+      deprecated: true
       security:
         - bearerAuth: []
       parameters:
@@ -243,6 +302,13 @@ paths:
       responses:
         '200':
           description: Paginated list of readings
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -253,6 +319,7 @@ paths:
       operationId: submitReading
       tags: [readings]
       summary: Submit a signed meter reading
+      deprecated: true
       description: |
         Verifies the Ed25519 signature, anchors the reading hash on Stellar,
         and mints energy certificates (1 token = 1 kWh).
@@ -284,6 +351,13 @@ paths:
       responses:
         '201':
           description: Reading accepted, anchored, and certificates minted
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -292,6 +366,13 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           description: Ed25519 signature invalid
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -300,6 +381,13 @@ paths:
                 error: Invalid meter signature
         '404':
           description: Meter not registered or inactive
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -308,6 +396,13 @@ paths:
                 error: Meter not found or inactive
         '409':
           description: Reading already anchored
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -316,6 +411,13 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           description: Anchor or mint failed
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -326,6 +428,7 @@ paths:
       operationId: submitReadingsBatch
       tags: [readings]
       summary: Submit up to 100 signed meter readings in one request
+      deprecated: true
       description: |
         Each reading is validated, anchored, and minted independently.
         Returns per-reading status. HTTP 207 Multi-Status when at least one
@@ -344,12 +447,26 @@ paths:
       responses:
         '207':
           description: Partial or full success — check per-reading status
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/BatchReadingResponse'
         '400':
           description: All readings failed or request body invalid
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -360,6 +477,7 @@ paths:
       operationId: verifyCertificate
       tags: [verify]
       summary: Retrieve chain of custody for a certificate
+      deprecated: true
       description: |
         Public endpoint — no authentication required.
         Accepts a certificate UUID, reading hash (64-char hex), or mint transaction hash.
@@ -388,6 +506,12 @@ paths:
               schema:
                 type: string
                 enum: [HIT, MISS]
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -396,6 +520,13 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '404':
           description: No certificate matches the given id
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -410,6 +541,7 @@ paths:
       operationId: verifyCertificateById
       tags: [verify]
       summary: Retrieve chain of custody by path parameter
+      deprecated: true
       description: |
         Identical to `GET /api/verify?id=` but accepts the identifier as a
         path segment. Useful for REST-style integrations.
@@ -436,6 +568,12 @@ paths:
               schema:
                 type: string
                 enum: [HIT, MISS]
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -520,6 +658,7 @@ paths:
       operationId: listCertificates
       tags: [certificates]
       summary: List certificates (cursor-based pagination)
+      deprecated: true
       description: |
         Supports filtering by status, date range, and text search.
         No authentication required.
@@ -574,6 +713,13 @@ paths:
       responses:
         '200':
           description: Paginated list of certificates
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -847,6 +993,7 @@ paths:
       operationId: retireCertificate
       tags: [certificates]
       summary: Retire a certificate permanently
+      deprecated: true
       description: |
         Calls `energy_token.retire` on-chain. A retired certificate cannot be
         used again. The retirement is recorded on Stellar and in the database.
@@ -868,6 +1015,13 @@ paths:
       responses:
         '200':
           description: Certificate retired successfully
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -878,6 +1032,13 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           description: Certificate already retired
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -892,11 +1053,19 @@ paths:
       operationId: listMeters
       tags: [meters]
       summary: List all registered meters
+      deprecated: true
       security:
         - bearerAuth: []
       responses:
         '200':
           description: Array of meter records
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -909,6 +1078,7 @@ paths:
       operationId: registerMeter
       tags: [meters]
       summary: Register a new meter
+      deprecated: true
       security:
         - bearerAuth: []
       requestBody:
@@ -920,6 +1090,13 @@ paths:
       responses:
         '201':
           description: Meter registered
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -930,6 +1107,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '409':
           description: A meter with this public key already exists
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -940,6 +1124,7 @@ paths:
       operationId: revokeMeter
       tags: [meters]
       summary: Deactivate a meter (set active=false)
+      deprecated: true
       security:
         - bearerAuth: []
       parameters:
@@ -952,6 +1137,13 @@ paths:
       responses:
         '200':
           description: Meter deactivated
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -966,6 +1158,7 @@ paths:
       operationId: getJob
       tags: [jobs]
       summary: Poll background job status
+      deprecated: true
       description: |
         Poll this endpoint after `POST /api/readings` to check whether the
         Stellar anchor and mint have completed.
@@ -980,6 +1173,13 @@ paths:
       responses:
         '200':
           description: Job record
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -992,6 +1192,7 @@ paths:
       operationId: exportAuditLog
       tags: [audit]
       summary: Export audit log as CSV
+      deprecated: true
       description: |
         Returns audit log entries as a CSV file. Defaults to the last 30 days.
         Requires operator JWT.
@@ -1024,6 +1225,12 @@ paths:
               schema:
                 type: string
               example: 'attachment; filename="audit_log_2026-01-01_2026-01-31.csv"'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             text/csv:
               schema:
@@ -1037,10 +1244,18 @@ paths:
       tags: [health]
       summary: Liveness check
       description: Returns 200 when the service is running. Used by uptime monitoring.
+      deprecated: true
       security: []
       responses:
         '200':
           description: Service is healthy
+          headers:
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
@@ -1084,6 +1299,31 @@ components:
         type: string
         enum: [v1]
         example: v1
+    Deprecation:
+      description: |
+        Present on responses served from unversioned `/api/` routes.
+        Signals that the route is deprecated and will be removed after the
+        date advertised in the `Sunset` header.
+      schema:
+        type: string
+        enum: ['true']
+        example: 'true'
+    Sunset:
+      description: |
+        Present on responses served from unversioned `/api/` routes.
+        HTTP-date (RFC 7231) after which the legacy route may be removed.
+        At least 6 months from the deprecation announcement.
+      schema:
+        type: string
+        example: 'Wed, 01 Jul 2026 00:00:00 GMT'
+    Link:
+      description: |
+        Present on responses served from unversioned `/api/` routes.
+        Points to the equivalent canonical `/api/v1/` URL using
+        `rel="successor-version"`.
+      schema:
+        type: string
+        example: '</api/v1/auth/login>; rel="successor-version"'
 
   parameters:
     limit:

@@ -7,6 +7,7 @@ export interface DashboardFilters {
   };
   meterIds: string[];
   certificateStatus: string | null;
+  pageSize?: number;
 }
 
 export const DEFAULT_DASHBOARD_FILTERS: DashboardFilters = {
@@ -16,13 +17,27 @@ export const DEFAULT_DASHBOARD_FILTERS: DashboardFilters = {
   },
   meterIds: [],
   certificateStatus: null,
+  pageSize: undefined,
 };
 
 const STORAGE_KEY_PREFIX = 'solaproof:filters:';
 const DEBOUNCE_MS = 300;
 
-function getStorageKey(userId: string | null | undefined): string {
-  return `${STORAGE_KEY_PREFIX}${userId ?? 'anonymous'}`;
+/**
+ * Build the namespaced storage key. Shape:
+ *   solaproof:filters:<namespace>:<userId>
+ * When no namespace is supplied the legacy key shape is preserved:
+ *   solaproof:filters:<userId>
+ */
+function getStorageKey(
+  userId: string | null | undefined,
+  namespace?: string | null,
+): string {
+  const user = userId ?? 'anonymous';
+  if (namespace) {
+    return `${STORAGE_KEY_PREFIX}${namespace}:${user}`;
+  }
+  return `${STORAGE_KEY_PREFIX}${user}`;
 }
 
 function isBrowser(): boolean {
@@ -46,80 +61,127 @@ function isValidFilters(value: unknown): value is DashboardFilters {
     candidate.meterIds.every((id) => typeof id === 'string');
   const statusOk =
     candidate.certificateStatus === null || typeof candidate.certificateStatus === 'string';
-  return fromOk && toOk && meterIdsOk && statusOk;
+  const pageSizeOk =
+    candidate.pageSize === undefined ||
+    candidate.pageSize === null ||
+    (typeof candidate.pageSize === 'number' && Number.isFinite(candidate.pageSize));
+  return fromOk && toOk && meterIdsOk && statusOk && pageSizeOk;
 }
 
-function readStoredFilters(userId: string | null | undefined): DashboardFilters {
+function readStoredFilters<T extends DashboardFilters>(
+  userId: string | null | undefined,
+  namespace: string | null | undefined,
+  defaults: T,
+): T {
   if (!isBrowser()) {
-    return DEFAULT_DASHBOARD_FILTERS;
+    return defaults;
   }
   try {
-    const raw = window.localStorage.getItem(getStorageKey(userId));
+    const raw = window.localStorage.getItem(getStorageKey(userId, namespace));
     if (!raw) {
-      return DEFAULT_DASHBOARD_FILTERS;
+      return defaults;
     }
     const parsed: unknown = JSON.parse(raw);
     if (!isValidFilters(parsed)) {
-      return DEFAULT_DASHBOARD_FILTERS;
+      return defaults;
     }
     return {
+      ...defaults,
       dateRange: {
         from: parsed.dateRange.from,
         to: parsed.dateRange.to,
       },
       meterIds: [...parsed.meterIds],
       certificateStatus: parsed.certificateStatus,
-    };
+      ...(parsed.pageSize !== undefined ? { pageSize: parsed.pageSize } : {}),
+    } as T;
   } catch {
-    return DEFAULT_DASHBOARD_FILTERS;
+    return defaults;
   }
 }
 
-function writeStoredFilters(userId: string | null | undefined, filters: DashboardFilters): void {
+function writeStoredFilters(
+  userId: string | null | undefined,
+  namespace: string | null | undefined,
+  filters: DashboardFilters,
+): void {
   if (!isBrowser()) {
     return;
   }
   try {
-    window.localStorage.setItem(getStorageKey(userId), JSON.stringify(filters));
+    window.localStorage.setItem(
+      getStorageKey(userId, namespace),
+      JSON.stringify(filters),
+    );
   } catch {
     // Ignore storage errors (quota exceeded, privacy mode, etc.)
   }
 }
 
-function clearStoredFilters(userId: string | null | undefined): void {
+function clearStoredFilters(
+  userId: string | null | undefined,
+  namespace: string | null | undefined,
+): void {
   if (!isBrowser()) {
     return;
   }
   try {
-    window.localStorage.removeItem(getStorageKey(userId));
+    window.localStorage.removeItem(getStorageKey(userId, namespace));
   } catch {
     // Ignore storage errors
   }
 }
 
-export interface UsePersistentFiltersResult {
-  filters: DashboardFilters;
-  setFilters: (next: DashboardFilters | ((prev: DashboardFilters) => DashboardFilters)) => void;
-  updateFilters: (patch: Partial<DashboardFilters>) => void;
+export interface UsePersistentFiltersResult<T extends DashboardFilters = DashboardFilters> {
+  filters: T;
+  setFilters: (next: T | ((prev: T) => T)) => void;
+  updateFilters: (patch: Partial<T>) => void;
   resetFilters: () => void;
   isHydrated: boolean;
 }
 
-export function usePersistentFilters(
+export interface UsePersistentFiltersOptions<T extends DashboardFilters = DashboardFilters> {
+  /** Route namespace, e.g. 'dashboard' or 'certificates'. */
+  namespace?: string | null;
+  /** Defaults used when nothing is persisted. */
+  defaults?: T;
+}
+
+/**
+ * Persist dashboard filter state in localStorage.
+ *
+ * Backwards compatible: `usePersistentFilters(userId)` keeps the legacy
+ * un-namespaced key. Pass a namespace (via the second argument or an options
+ * object) to scope state per route.
+ */
+export function usePersistentFilters<T extends DashboardFilters = DashboardFilters>(
   userId: string | null | undefined,
-): UsePersistentFiltersResult {
-  const [filters, setFiltersState] = useState<DashboardFilters>(DEFAULT_DASHBOARD_FILTERS);
+  namespaceOrOptions?: string | null | UsePersistentFiltersOptions<T>,
+): UsePersistentFiltersResult<T> {
+  const options: UsePersistentFiltersOptions<T> =
+    typeof namespaceOrOptions === 'object' && namespaceOrOptions !== null
+      ? namespaceOrOptions
+      : { namespace: namespaceOrOptions ?? null };
+  const namespace = options.namespace ?? null;
+  const defaults = (options.defaults ?? DEFAULT_DASHBOARD_FILTERS) as T;
+
+  const [filters, setFiltersState] = useState<T>(defaults);
   const [isHydrated, setIsHydrated] = useState<boolean>(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userIdRef = useRef<string | null | undefined>(userId);
+  const namespaceRef = useRef<string | null>(namespace);
+  const defaultsRef = useRef<T>(defaults);
 
-  // Restore persisted state on mount (and when the user changes).
+  // Restore persisted state on mount (and when the user or namespace changes).
   useEffect(() => {
     userIdRef.current = userId;
-    const restored = readStoredFilters(userId);
+    namespaceRef.current = namespace;
+    defaultsRef.current = defaults;
+    const restored = readStoredFilters(userId, namespace, defaults);
     setFiltersState(restored);
     setIsHydrated(true);
-  }, [userId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, namespace]);
 
   // Persist state on change with debouncing.
   useEffect(() => {
@@ -130,7 +192,7 @@ export function usePersistentFilters(
       clearTimeout(debounceRef.current);
     }
     debounceRef.current = setTimeout(() => {
-      writeStoredFilters(userIdRef.current, filters);
+      writeStoredFilters(userIdRef.current, namespaceRef.current, filters);
       debounceRef.current = null;
     }, DEBOUNCE_MS);
 
@@ -142,37 +204,40 @@ export function usePersistentFilters(
     };
   }, [filters, isHydrated]);
 
-  const setFilters = useCallback(
-    (next: DashboardFilters | ((prev: DashboardFilters) => DashboardFilters)) => {
-      setFiltersState((prev) => {
-        const resolved = typeof next === 'function' ? next(prev) : next;
-        return {
-          dateRange: {
-            from: resolved.dateRange.from,
-            to: resolved.dateRange.to,
-          },
-          meterIds: [...resolved.meterIds],
-          certificateStatus: resolved.certificateStatus,
-        };
-      });
-    },
-    [],
-  );
+  const setFilters = useCallback((next: T | ((prev: T) => T)) => {
+    setFiltersState((prev) => {
+      const resolved = typeof next === 'function' ? next(prev) : next;
+      return {
+        ...resolved,
+        dateRange: {
+          from: resolved.dateRange.from,
+          to: resolved.dateRange.to,
+        },
+        meterIds: [...resolved.meterIds],
+        certificateStatus: resolved.certificateStatus,
+      } as T;
+    });
+  }, []);
 
-  const updateFilters = useCallback((patch: Partial<DashboardFilters>) => {
-    setFiltersState((prev) => ({
-      dateRange: patch.dateRange
-        ? {
-            from: patch.dateRange.from,
-            to: patch.dateRange.to,
-          }
-        : prev.dateRange,
-      meterIds: patch.meterIds ? [...patch.meterIds] : prev.meterIds,
-      certificateStatus:
-        patch.certificateStatus !== undefined
-          ? patch.certificateStatus
-          : prev.certificateStatus,
-    }));
+  const updateFilters = useCallback((patch: Partial<T>) => {
+    setFiltersState((prev) => {
+      const next: T = {
+        ...prev,
+        ...patch,
+        dateRange: patch.dateRange
+          ? {
+              from: patch.dateRange.from,
+              to: patch.dateRange.to,
+            }
+          : prev.dateRange,
+        meterIds: patch.meterIds ? [...patch.meterIds] : prev.meterIds,
+        certificateStatus:
+          patch.certificateStatus !== undefined
+            ? patch.certificateStatus
+            : prev.certificateStatus,
+      } as T;
+      return next;
+    });
   }, []);
 
   const resetFilters = useCallback(() => {
@@ -180,8 +245,8 @@ export function usePersistentFilters(
       clearTimeout(debounceRef.current);
       debounceRef.current = null;
     }
-    clearStoredFilters(userIdRef.current);
-    setFiltersState(DEFAULT_DASHBOARD_FILTERS);
+    clearStoredFilters(userIdRef.current, namespaceRef.current);
+    setFiltersState(defaultsRef.current);
   }, []);
 
   return {

@@ -9,9 +9,30 @@ interface Props {
   kwh: number
   onConfirm: (reason: string) => Promise<void>
   onClose: () => void
+  /**
+   * Called synchronously when the user submits, before the transaction
+   * round-trip begins. The parent should mark the certificate as
+   * "Retiring…" optimistically so the list reflects the pending state
+   * immediately. This is purely client-side; nothing is persisted to the
+   * server until the transaction confirms.
+   */
+  onOptimisticStart?: () => void
+  /**
+   * Called when the transaction fails so the parent can revert the
+   * optimistic "Retiring…" state. Receives the error that will also be
+   * surfaced in the modal.
+   */
+  onOptimisticRevert?: (error: Error) => void
 }
 
-export function RetireModal({ certificateId, kwh, onConfirm, onClose }: Props) {
+export function RetireModal({
+  certificateId,
+  kwh,
+  onConfirm,
+  onClose,
+  onOptimisticStart,
+  onOptimisticRevert,
+}: Props) {
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -19,6 +40,9 @@ export function RetireModal({ certificateId, kwh, onConfirm, onClose }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const triggerRef = useRef<Element | null>(null)
+  // Guard against double-submits (e.g. rapid Enter presses) so we never
+  // start two concurrent retire transactions from the same modal.
+  const inFlightRef = useRef(false)
 
   // Capture triggering element and auto-focus dialog on mount; restore focus on unmount
   useEffect(() => {
@@ -57,14 +81,28 @@ export function RetireModal({ certificateId, kwh, onConfirm, onClose }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+
     setSubmitting(true)
     setError(null)
+
+    // Optimistically reflect the pending state in the parent list right away.
+    // This is client-only; the retire request body is unchanged and nothing
+    // is persisted until the transaction confirms.
+    onOptimisticStart?.()
+
     try {
       await onConfirm(reason)
       setSucceeded(true)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Retirement failed. Please try again.')
+      const normalized =
+        err instanceof Error ? err : new Error('Retirement failed. Please try again.')
+      // Revert the optimistic state in the parent before surfacing the error.
+      onOptimisticRevert?.(normalized)
+      setError(normalized.message)
     } finally {
+      inFlightRef.current = false
       setSubmitting(false)
     }
   }

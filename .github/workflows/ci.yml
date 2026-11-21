@@ -311,6 +311,112 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
 
+  # Closes #249 — Lighthouse CI performance budget enforcement.
+  # Runs on every PR targeting main/develop and on push to main (baseline capture).
+  lighthouse-ci:
+    name: Lighthouse CI (performance budgets)
+    runs-on: ubuntu-latest
+    needs: web
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build web app
+        run: pnpm build
+        working-directory: apps/web
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder' }}
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_ENERGY_TOKEN_ID: placeholder
+          NEXT_PUBLIC_AUDIT_REGISTRY_ID: placeholder
+          NEXT_PUBLIC_COMMUNITY_GOVERNANCE_ID: placeholder
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY || 'placeholder' }}
+          MINTER_SECRET_KEY: ${{ secrets.MINTER_SECRET_KEY || 'placeholder' }}
+
+      # Restore the baseline captured on main so PRs compare against it.
+      - name: Restore Lighthouse baseline (main)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: .lighthouseci/baseline
+          key: lighthouse-baseline-main-${{ github.sha }}
+          restore-keys: |
+            lighthouse-baseline-main-
+
+      - name: Run Lighthouse CI (autorun)
+        id: lhci
+        run: pnpm dlx @lhci/cli@0.14.x autorun
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+          LHCI_BUILD_CONTEXT__CURRENT_BRANCH: ${{ github.head_ref || github.ref_name }}
+          LHCI_BUILD_CONTEXT__COMMIT_SHA: ${{ github.sha }}
+
+      - name: Upload Lighthouse results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-results
+          path: .lighthouseci
+          retention-days: 30
+
+      # On push to main, persist the latest run as the new baseline.
+      - name: Save Lighthouse baseline (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: .lighthouseci/baseline
+          key: lighthouse-baseline-main-${{ github.sha }}
+
+      # Post a PR comment with the budget diff when any budget is exceeded.
+      - name: Comment budget diff on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            let body = '## ❌ Lighthouse CI — performance budget exceeded\n\n';
+            body += 'One or more performance budgets failed. See the `lighthouse-results` artifact for full reports.\n\n';
+            const dir = '.lighthouseci';
+            try {
+              const files = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+              const rows = [];
+              for (const f of files) {
+                const data = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
+                const audits = data.audits || {};
+                const lcp = audits['largest-contentful-paint']?.numericValue;
+                const cls = audits['cumulative-layout-shift']?.numericValue;
+                const tbt = audits['total-blocking-time']?.numericValue;
+                if (lcp != null) rows.push(`| ${data.finalUrl || f} | ${(lcp / 1000).toFixed(2)} s | ${cls?.toFixed(3) ?? 'n/a'} | ${tbt?.toFixed(0) ?? 'n/a'} ms |`);
+              }
+              if (rows.length) {
+                body += '| URL | LCP | CLS | TBT |\n| --- | --- | --- | --- |\n' + rows.join('\n') + '\n\n';
+              }
+            } catch (e) {
+              body += `_Could not parse results: ${e.message}_\n\n`;
+            }
+            body += '**Budgets:** LCP < 2.5 s · CLS < 0.1 · TBT < 200 ms · gzipped JS bundle < 250 kB\n';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
+
   # Closes #62 — Stellar sandbox + contract integration tests in CI.
   # Both the sandbox and the tests run in the same job so the Docker
   # container started by local-soroban-setup.sh is reachable by the tests.

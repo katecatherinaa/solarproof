@@ -1,17 +1,46 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
+import { usePersistentFilters } from '@/hooks/use-persistent-filters'
 
 const OPTIONS = [10, 25, 50] as const
+
+const NAMESPACE = 'certificates'
+const PAGE_SIZE_KEY = 'limit'
 
 export function PageSizeSelect({ current }: { current: number }) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const { filters, setFilter, clearFilters } = usePersistentFilters(NAMESPACE)
+
+  const persistedLimit = filters[PAGE_SIZE_KEY]
+  const urlLimit = searchParams.get('limit')
+
+  // On mount, initialize from the persisted value when the URL param is absent.
+  useEffect(() => {
+    if (urlLimit) return
+    if (!persistedLimit) return
+    const parsed = Number(persistedLimit)
+    if (!OPTIONS.includes(parsed as (typeof OPTIONS)[number])) return
+    if (parsed === current) return
+
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('limit', String(parsed))
+    params.delete('cursor') // reset to first page on size change
+    router.replace(`${pathname}?${params.toString()}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const value = e.target.value
+
+    // Persist the selected page size so it survives a hard refresh.
+    setFilter(PAGE_SIZE_KEY, value)
+
     const params = new URLSearchParams(searchParams.toString())
-    params.set('limit', e.target.value)
+    params.set('limit', value)
     params.delete('cursor') // reset to first page on size change
     router.push(`${pathname}?${params.toString()}`)
   }
@@ -34,3 +63,13 @@ export function PageSizeSelect({ current }: { current: number }) {
     </div>
   )
 }
+
+// Exported so the certificates page's Clear filters action can reset the
+// persisted page size along with the other persisted filters.
+export function clearPersistedPageSize(
+  clearFilters: ReturnType<typeof usePersistentFilters>['clearFilters'],
+) {
+  clearFilters()
+}
+</｜｜DSML｜｜ parameter>
+</｜｜DSML｜｜ invoke>

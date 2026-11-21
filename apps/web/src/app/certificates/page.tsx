@@ -137,6 +137,9 @@ export default function CertificatesPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkRetiring, setBulkRetiring] = useState(false)
   const [showBulkConfirm, setShowBulkConfirm] = useState(false)
+  // Optimistic retirement state: IDs currently awaiting tx confirmation.
+  // Never sent to the server; purely client-side UI state.
+  const [retiringIds, setRetiringIds] = useState<Set<string>>(new Set())
 
   // Persistent filter state (per-user, restored from localStorage across sessions)
   const { filters, setFilter, resetFilters, isHydrated } = usePersistentFilters(
@@ -243,24 +246,71 @@ export default function CertificatesPage() {
 
   async function handleRetire(reason: string) {
     if (!retiring) return
+    const certId = retiring.id
+    // Guard against concurrent retires of the same certificate.
+    if (retiringIds.has(certId)) return
+
+    // Optimistically mark the certificate as retiring before the round-trip.
+    setRetiringIds((prev) => {
+      const next = new Set(prev)
+      next.add(certId)
+      return next
+    })
+    setRetiring(null)
+
     const pendingId = toast('pending', 'Submitting retirement transaction…')
     try {
-      const res = await fetch(`/api/certificates/${retiring.id}/retire`, {
+      const res = await fetch(`/api/certificates/${certId}/retire`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // Only server-relevant fields — optimistic state is never persisted here.
         body: JSON.stringify({ wallet_address: address, reason }),
       })
       dismiss(pendingId)
       if (!res.ok) {
         const { error: msg } = await res.json().catch(() => ({ error: 'Unknown error' }))
+        // Revert optimistic state on failure.
+        setRetiringIds((prev) => {
+          const next = new Set(prev)
+          next.delete(certId)
+          return next
+        })
         toast('error', msg ?? 'Retirement failed')
         return
       }
+      const json = await res.json().catch(() => ({}))
+      const retiredAt: string | null = json?.retired_at ?? new Date().toISOString()
+      const txHash: string | null = json?.tx_hash ?? json?.retire_tx_hash ?? null
+      // Commit the confirmed state into the cache, then reconcile with the server.
+      qc.setQueryData<CertificatesResponse | undefined>(
+        ['certificates', q, status, dateFrom, dateTo, meterId],
+        (prev) => {
+          if (!prev) return prev
+          return {
+            ...prev,
+            data: prev.data.map((c) =>
+              c.id === certId
+                ? { ...c, retired: true, retired_at: retiredAt, retired_by: address ?? null, mint_tx_hash: txHash ?? c.mint_tx_hash }
+                : c
+            ),
+          }
+        }
+      )
+      setRetiringIds((prev) => {
+        const next = new Set(prev)
+        next.delete(certId)
+        return next
+      })
       toast('success', 'Certificate retired successfully')
-      setRetiring(null)
       qc.invalidateQueries({ queryKey: ['certificates'] })
     } catch (err) {
       dismiss(pendingId)
+      // Revert optimistic state on failure.
+      setRetiringIds((prev) => {
+        const next = new Set(prev)
+        next.delete(certId)
+        return next
+      })
       toast('error', err instanceof Error ? err.message : 'Retirement failed')
     }
   }
@@ -520,6 +570,17 @@ export default function CertificatesPage() {
                             <Leaf className="h-3 w-3" aria-hidden="true" />
                             Retired
                           </span>
+                        ) : retiringIds.has(cert.id) ? (
+                          <span
+                            className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                            aria-live="polite"
+                          >
+                            <span
+                              className="h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent"
+                              aria-hidden="true"
+                            />
+                            Retiring…
+                          </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
                             <Award className="h-3 w-3" aria-hidden="true" />
@@ -532,7 +593,7 @@ export default function CertificatesPage() {
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => setTransferring(cert)}
-                              disabled={!connected}
+                              disabled={!connected || retiringIds.has(cert.id)}
                               aria-label={`Transfer certificate ${cert.id.slice(0, 8)}`}
                               className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
                             >
@@ -540,11 +601,11 @@ export default function CertificatesPage() {
                             </button>
                             <button
                               onClick={() => setRetiring(cert)}
-                              disabled={!connected}
+                              disabled={!connected || retiringIds.has(cert.id)}
                               aria-label={`Retire certificate ${cert.id.slice(0, 8)}`}
                               className="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
                             >
-                              Retire
+                              {retiringIds.has(cert.id) ? 'Retiring…' : 'Retire'}
                             </button>
                             <a
                               href={`/api/certificates/${cert.id}/irec-export${address ? `?holder=${encodeURIComponent(address)}` : ''}`}

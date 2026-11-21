@@ -878,3 +878,131 @@ describe('regression issue_101: POST /api/v1/meters — schema contract', () => 
     expect(res.status).toBe(400)
   })
 })
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Issue #250 — Deprecation headers on legacy /api/ routes
+//
+// Unversioned /api/ routes must advertise their deprecation so integrators can
+// detect they are on a legacy path:
+//   • Deprecation: true
+//   • Sunset: <HTTP-date at least 6 months in the future>
+//   • Link: <.../api/v1/...>; rel="successor-version"
+// Versioned /api/v1/ routes must NOT carry these headers.
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SIX_MONTHS_MS = 1000 * 60 * 60 * 24 * 30 * 6
+
+function expectDeprecationHeaders(
+  res: { headers: { get: (k: string) => string | null } },
+  canonicalPath: string
+) {
+  expect(res.headers.get('deprecation')).toBe('true')
+
+  const sunset = res.headers.get('sunset')
+  expect(sunset).toBeTruthy()
+  const sunsetMs = Date.parse(sunset as string)
+  expect(Number.isNaN(sunsetMs)).toBe(false)
+  expect(sunsetMs).toBeGreaterThan(Date.now() + SIX_MONTHS_MS)
+
+  const link = res.headers.get('link')
+  expect(link).toBeTruthy()
+  expect(link).toContain(canonicalPath)
+  expect(link).toMatch(/rel="?successor-version"?/i)
+}
+
+describe('regression issue_250: deprecation headers on legacy /api/ routes', () => {
+  it('test_issue_250_legacy_readings_post_has_deprecation_headers', async () => {
+    const res = await postReading(
+      makeReadingRequest({ meter_id: METER_ID, kwh: -1, timestamp: TIMESTAMP, signature_hex: 'a'.repeat(128) })
+    )
+    expectDeprecationHeaders(res, '/api/v1/readings')
+  })
+
+  it('test_issue_250_legacy_meters_post_has_deprecation_headers', async () => {
+    mockMeterDb()
+    const res = await postMeter(makeMeterRequest({}))
+    expectDeprecationHeaders(res, '/api/v1/meters')
+  })
+
+  it('test_issue_250_legacy_meters_get_has_deprecation_headers', async () => {
+    vi.mocked(requireAuth).mockResolvedValueOnce({
+      user: { id: 'user-1' },
+      cooperativeId: 'coop-1',
+      accessToken: 'abc',
+    })
+    vi.mocked(createServiceClient).mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        }),
+      }),
+    } as unknown as ReturnType<typeof createServiceClient>)
+
+    const req = makeRequest('/api/meters')
+    const res = await getMeters(req)
+    expectDeprecationHeaders(res, '/api/v1/meters')
+  })
+
+  it('test_issue_250_legacy_certificates_get_has_deprecation_headers', async () => {
+    vi.mocked(createServiceClient).mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({ data: [], count: 0, error: null }),
+          }),
+        }),
+      }),
+    } as unknown as ReturnType<typeof createServiceClient>)
+
+    const req = makeRequest('/api/certificates')
+    const res = await getCerts(req)
+    expectDeprecationHeaders(res, '/api/v1/certificates')
+  })
+
+  it('test_issue_250_legacy_verify_get_has_deprecation_headers', async () => {
+    const req = makeRequest('/api/verify')
+    const res = await getVerify(req)
+    expectDeprecationHeaders(res, '/api/v1/verify')
+  })
+
+  it('test_issue_250_legacy_audit_log_get_has_deprecation_headers', async () => {
+    vi.mocked(createServiceClient).mockReturnValue({
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          gte: vi.fn().mockReturnValue({
+            lte: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
+          }),
+        }),
+      }),
+    } as unknown as ReturnType<typeof createServiceClient>)
+
+    const req = makeRequest('/api/audit-log')
+    const res = await getAuditLog(req)
+    expectDeprecationHeaders(res, '/api/v1/audit-log')
+  })
+
+  it('test_issue_250_legacy_health_get_has_deprecation_headers', async () => {
+    const res = await getHealth()
+    expectDeprecationHeaders(res, '/api/v1/health')
+  })
+
+  it('test_issue_250_sunset_date_is_at_least_six_months_out', async () => {
+    const res = await getHealth()
+    const sunset = res.headers.get('sunset')
+    expect(sunset).toBeTruthy()
+    const sunsetMs = Date.parse(sunset as string)
+    expect(sunsetMs).toBeGreaterThan(Date.now() + SIX_MONTHS_MS)
+  })
+
+  it('test_issue_250_versioned_routes_have_no_deprecation_headers', async () => {
+    const res = await getHealth()
+    // The versioned handler is the same function; the headers are applied by
+    // the legacy wrapper, so a direct call must not carry them.
+    expect(res.headers.get('deprecation')).toBeNull()
+    expect(res.headers.get('sunset')).toBeNull()
+  })
+})

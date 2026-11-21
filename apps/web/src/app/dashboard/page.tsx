@@ -18,9 +18,10 @@ import { useTheme } from 'next-themes'
 import { Zap, Award, Leaf, TrendingUp, Download, Bell } from 'lucide-react'
 import { AccessibleLegend } from '@/components/accessible-chart-legend'
 import { StatCardSkeleton, ChartSkeleton, TableRowSkeleton } from '@/components/skeleton'
-import { useState, useMemo, memo } from 'react'
+import { useState, useMemo, memo, useEffect } from 'react'
 import { useRealtimeReadings } from '@/hooks/use-realtime-readings'
 import { ErrorBoundary } from '@/components/error-boundary'
+import { usePersistentFilters } from '@/hooks/use-persistent-filters'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -227,12 +228,62 @@ function exportCsv(data: object[], filename: string) {
 export default function DashboardPage() {
   const [granularity, setGranularity] = useState<Period>('day')
   const [range, setRange] = useState<'30d' | '90d' | 'ytd' | 'all'>('30d')
+  const [meterIds, setMeterIds] = useState<string[]>([])
+  const [pageSize, setPageSize] = useState<number>(10)
   const [reportMonth, setReportMonth] = useState<string>(currentMonth())
   const [reportDownloading, setReportDownloading] = useState(false)
   const [reportError, setReportError] = useState<string | null>(null)
   // TODO: replace with the cooperative membership/role from the session context.
   const isCooperative = true
-  
+
+  const {
+    filters: persistedFilters,
+    setFilter: setPersistedFilter,
+    resetFilters,
+    hydrated: filtersHydrated,
+  } = usePersistentFilters('dashboard', {
+    range: '30d',
+    meterIds: [] as string[],
+    pageSize: 10,
+  })
+
+  // Restore persisted filter values once the hook has hydrated from storage.
+  useEffect(() => {
+    if (!filtersHydrated) return
+    const persistedRange = persistedFilters.range
+    if (persistedRange === '30d' || persistedRange === '90d' || persistedRange === 'ytd' || persistedRange === 'all') {
+      setRange(persistedRange)
+    }
+    if (Array.isArray(persistedFilters.meterIds)) {
+      setMeterIds(persistedFilters.meterIds)
+    }
+    if (typeof persistedFilters.pageSize === 'number' && persistedFilters.pageSize > 0) {
+      setPageSize(persistedFilters.pageSize)
+    }
+  }, [filtersHydrated, persistedFilters.range, persistedFilters.meterIds, persistedFilters.pageSize])
+
+  const handleRangeChange = (next: '30d' | '90d' | 'ytd' | 'all') => {
+    setRange(next)
+    setPersistedFilter('range', next)
+  }
+
+  const handleMeterIdsChange = (next: string[]) => {
+    setMeterIds(next)
+    setPersistedFilter('meterIds', next)
+  }
+
+  const handlePageSizeChange = (next: number) => {
+    setPageSize(next)
+    setPersistedFilter('pageSize', next)
+  }
+
+  const handleClearFilters = () => {
+    resetFilters()
+    setRange('30d')
+    setMeterIds([])
+    setPageSize(10)
+  }
+
   const dateParams = useMemo(() => {
     const now = new Date()
     let from: Date | undefined
@@ -257,7 +308,8 @@ export default function DashboardPage() {
     error: analyticsError,
   } = useQuery({ 
     queryKey: ['analytics', dateParams.date_from, dateParams.date_to, dateParams.granularity],
-    queryFn: () => fetchAnalytics(dateParams) 
+    queryFn: () => fetchAnalytics(dateParams),
+    enabled: filtersHydrated,
   })
 
   const {
@@ -313,13 +365,14 @@ export default function DashboardPage() {
           <p className="text-sm text-gray-500 dark:text-gray-400">Energy generation and certificate trends.</p>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Range Selector */}
           <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-800 dark:bg-gray-950">
             {(['30d', '90d', 'ytd', 'all'] as const).map((r) => (
               <button
                 key={r}
-                onClick={() => setRange(r)}
+                onClick={() => handleRangeChange(r)}
+                aria-pressed={range === r}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium uppercase transition-colors ${
                   range === r 
                     ? 'bg-yellow-400 text-gray-900' 
@@ -330,6 +383,42 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
+
+          {/* Meter Selector */}
+          <label htmlFor="dashboard-meter-filter" className="sr-only">Filter by meter</label>
+          <select
+            id="dashboard-meter-filter"
+            multiple
+            value={meterIds}
+            onChange={(e) =>
+              handleMeterIdsChange(Array.from(e.target.selectedOptions, (o) => o.value))
+            }
+            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-900 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+          >
+            {(analytics?.meter_stats ?? []).map((m) => (
+              <option key={m.meter_id} value={m.meter_id}>{m.meter_name}</option>
+            ))}
+          </select>
+
+          {/* Page size */}
+          <label htmlFor="dashboard-page-size" className="sr-only">Rows per page</label>
+          <select
+            id="dashboard-page-size"
+            value={pageSize}
+            onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs text-gray-900 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-100"
+          >
+            {[10, 25, 50].map((size) => (
+              <option key={size} value={size}>{size} / page</option>
+            ))}
+          </select>
+
+          <button
+            onClick={handleClearFilters}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-900"
+          >
+            Clear filters
+          </button>
 
           <div className="h-6 w-px bg-gray-200 dark:bg-gray-800" />
 
@@ -574,7 +663,10 @@ export default function DashboardPage() {
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
               {analyticsLoading ? (
                 <><TableRowSkeleton cols={5} /><TableRowSkeleton cols={5} /><TableRowSkeleton cols={5} /></>
-              ) : analytics?.meter_stats.map((m) => (
+              ) : (analytics?.meter_stats ?? [])
+                .filter((m) => meterIds.length === 0 || meterIds.includes(m.meter_id))
+                .slice(0, pageSize)
+                .map((m) => (
                 <tr key={m.meter_id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40">
                   <td className="px-6 py-4">
                     <div className="font-medium text-gray-900 dark:text-gray-100">{m.meter_name}</div>
@@ -643,7 +735,7 @@ export default function DashboardPage() {
                     No certificate alerts yet.
                   </td>
                 </tr>
-              ) : notifications.slice(0, 10).map((n) => (
+              ) : notifications.slice(0, pageSize).map((n) => (
                 <tr
                   key={n.id}
                   onClick={() => {
@@ -678,7 +770,7 @@ export default function DashboardPage() {
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
               {readingsLoading ? (
                 <><TableRowSkeleton cols={4} /><TableRowSkeleton cols={4} /></>
-              ) : readings?.slice(0, 10).map((r) => (
+              ) : readings?.slice(0, pageSize).map((r) => (
                 <tr key={r.id}>
                   <td className="px-6 py-3 font-mono text-[10px] text-gray-500">{r.id}</td>
                   <td className="px-6 py-3 text-gray-900 dark:text-gray-100 font-medium">{r.kwh.toFixed(3)} kWh</td>
