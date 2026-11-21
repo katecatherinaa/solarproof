@@ -153,6 +153,34 @@ export function middleware(req: NextRequest) {
     return redirect
   }
 
+  // ── Embeddable certificate widget ─────────────────────────────────────────
+  // /embed/certificate/[id] is a public, unauthenticated, iframe-embeddable
+  // page for third-party sites. It is cache-friendly and must not be blocked
+  // by auth or CSRF checks. We short-circuit here so the route is served
+  // directly with the appropriate framing and caching headers.
+  const isEmbedPath = /^\/embed\/certificate\/[^/]+$/.test(pathname)
+  if (isEmbedPath) {
+    const embedRes = NextResponse.next()
+    // Allow embedding in third-party iframes (overrides any global DENY).
+    embedRes.headers.set('X-Frame-Options', 'ALLOWALL')
+    embedRes.headers.set(
+      'Content-Security-Policy',
+      "frame-ancestors *",
+    )
+    // Cache-friendly: public, long-lived, with stale-while-revalidate.
+    embedRes.headers.set(
+      'Cache-Control',
+      'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400',
+    )
+    embedRes.headers.set('X-Content-Type-Options', 'nosniff')
+    embedRes.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin')
+    embedRes.headers.set('API-Version', 'v1')
+    const embedCorrelationId =
+      req.headers.get('x-correlation-id') ?? crypto.randomUUID()
+    embedRes.headers.set('x-correlation-id', embedCorrelationId)
+    return embedRes
+  }
+
   // ── Verify endpoint abuse protection ──────────────────────────────────────
   // Rate limit all public verifier paths: /api/verify, /api/verify/[id],
   // /api/v1/verify and /api/v1/verify/[id].

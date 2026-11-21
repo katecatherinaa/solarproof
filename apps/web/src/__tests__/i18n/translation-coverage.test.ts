@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { SUPPORTED_LOCALES } from '../../i18n/config';
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -62,5 +63,13 @@ describe('i18n translation coverage', () => {
 
   it('messages/en.json contains at least one translation key', () => {
     expect(enKeys.size).toBeGreaterThan(0);
+  });
+
+  it('messages/es.json contains at least one translation key', () => {
+    expect(esKeys.size).toBeGreaterThan(0);
+  });
+
+  it("includes 'es' in SUPPORTED_LOCALES", () => {
+    expect(SUPPORTED_LOCALES).toContain('es');
   });
 });

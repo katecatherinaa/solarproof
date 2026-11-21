@@ -7,6 +7,13 @@ interface TimeSeriesPoint {
   kwh: number;
 }
 
+interface CooperativeGoal {
+  targetKwh: number;
+  periodStart: string;
+  periodEnd: string;
+  actualKwh: number;
+}
+
 interface CooperativeStats {
   totalKwhGenerated: number;
   activeMeters: number;
@@ -14,6 +21,7 @@ interface CooperativeStats {
   certificatesRetired: number;
   memberCount: number;
   kwhTimeSeries: TimeSeriesPoint[];
+  goal?: CooperativeGoal | null;
 }
 
 interface CooperativeDashboardProps {
@@ -30,6 +38,79 @@ function StatCard({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
       <p className="text-sm font-medium text-gray-500">{label}</p>
       <p className="mt-1 text-2xl font-semibold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+function GoalProgress({ goal }: { goal: CooperativeGoal }) {
+  const { targetKwh, actualKwh, periodStart, periodEnd } = goal;
+
+  const progressPct =
+    targetKwh > 0 ? Math.min((actualKwh / targetKwh) * 100, 100) : 0;
+
+  const expectedPacePct = useMemo(() => {
+    const start = new Date(periodStart).getTime();
+    const end = new Date(periodEnd).getTime();
+    const now = Date.now();
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return 0;
+    }
+    const elapsed = Math.min(Math.max(now - start, 0), end - start);
+    return (elapsed / (end - start)) * 100;
+  }, [periodStart, periodEnd]);
+
+  const actualPct = targetKwh > 0 ? (actualKwh / targetKwh) * 100 : 0;
+  const belowPace = actualPct < expectedPacePct * 0.8;
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-base font-semibold text-gray-900">
+          Production Goal
+        </h2>
+        <p className="text-sm text-gray-500">
+          {new Date(periodStart).toLocaleDateString()} –{' '}
+          {new Date(periodEnd).toLocaleDateString()}
+        </p>
+      </div>
+
+      {belowPace && (
+        <div
+          role="alert"
+          className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800"
+        >
+          Production is below 80% of the expected pace for this period.
+        </div>
+      )}
+
+      <div className="mt-4">
+        <div className="flex items-baseline justify-between text-sm">
+          <span className="font-medium text-gray-900">
+            {formatNumber(actualKwh)} kWh
+          </span>
+          <span className="text-gray-500">
+            of {formatNumber(targetKwh)} kWh target
+          </span>
+        </div>
+        <div
+          className="mt-2 h-3 w-full overflow-hidden rounded-full bg-gray-200"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={targetKwh}
+          aria-valuenow={actualKwh}
+          aria-label="Production goal progress"
+        >
+          <div
+            className={`h-full rounded-full ${
+              belowPace ? 'bg-amber-500' : 'bg-emerald-500'
+            }`}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          {progressPct.toFixed(1)}% of target achieved
+        </p>
+      </div>
     </div>
   );
 }
@@ -179,6 +260,19 @@ export default function CooperativeDashboard({
         />
         <StatCard label="Members" value={formatNumber(stats.memberCount)} />
       </div>
+
+      {stats.goal ? (
+        <GoalProgress goal={stats.goal} />
+      ) : (
+        <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+          <h2 className="text-base font-semibold text-gray-900">
+            Production Goal
+          </h2>
+          <p className="mt-2 text-sm text-gray-500">
+            No production goal configured for this cooperative yet.
+          </p>
+        </div>
+      )}
 
       <div className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="text-base font-semibold text-gray-900">

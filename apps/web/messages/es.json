@@ -162,8 +162,112 @@
     "subtitle": "Herramientas administrativas de la cooperativa.",
     "unauthorized": "No tienes permiso para acceder a esta página.",
     "loading": "Cargando…",
-    "error": "No se pudieron cargar las herramientas de administración."
+    "error": "No se pudieron cargar las herramientas de administración.",
+    "users": "Usuarios",
+    "roles": "Roles",
+    "settings": "Configuración",
+    "auditLog": "Registro de auditoría",
+    "noUsers": "No se encontraron usuarios.",
+    "noAuditEntries": "Aún no hay entradas de auditoría.",
+    "table": {
+      "user": "Usuario",
+      "role": "Rol",
+      "status": "Estado",
+      "lastActive": "Última actividad",
+      "action": "Acción",
+      "timestamp": "Fecha y hora",
+      "actor": "Responsable",
+      "details": "Detalles"
+    },
+    "roles": {
+      "admin": "Administrador",
+      "operator": "Operador",
+      "viewer": "Observador"
+    },
+    "settingsForm": {
+      "heading": "Configuración de la Cooperativa",
+      "cooperativeName": "Nombre de la cooperativa",
+      "cooperativeNamePlaceholder": "Nombre de tu cooperativa",
+      "timezone": "Zona horaria",
+      "currency": "Moneda",
+      "submit": "Guardar Configuración",
+      "submitting": "Guardando…",
+      "success": "¡Configuración guardada con éxito!",
+      "errors": {
+        "nameRequired": "El nombre de la cooperativa es obligatorio.",
+        "timezoneRequired": "La zona horaria es obligatoria."
+      }
+    }
   },
+  "languageSwitcher": {
+    "label": "Idioma",
+    "en": "English",
+    "fr": "Français",
+    "es": "Español"
+  },
+  "auth": {
+    "signIn": "Iniciar sesión",
+    "signOut": "Cerrar sesión",
+    "signingIn": "Iniciando sesión…",
+    "signUp": "Registrarse",
+    "email": "Correo electrónico",
+    "emailPlaceholder": "tu@ejemplo.com",
+    "password": "Contraseña",
+    "passwordPlaceholder": "Ingresa tu contraseña",
+    "forgotPassword": "¿Olvidaste tu contraseña?",
+    "resetPassword": "Restablecer contraseña",
+    "sessionExpired": "Tu sesión ha expirado. Inicia sesión de nuevo.",
+    "errors": {
+      "invalidCredentials": "Correo electrónico o contraseña incorrectos.",
+      "emailRequired": "El correo electrónico es obligatorio.",
+      "emailInvalid": "Ingresa una dirección de correo electrónico válida.",
+      "passwordRequired": "La contraseña es obligatoria.",
+      "passwordTooShort": "La contraseña debe tener al menos 8 caracteres."
+    }
+  },
+  "validation": {
+    "required": "Este campo es obligatorio.",
+    "email": "Ingresa una dirección de correo electrónico válida.",
+    "minLength": "Debe tener al menos {min} caracteres.",
+    "maxLength": "Debe tener como máximo {max} caracteres.",
+    "number": "Ingresa un número válido.",
+    "positive": "Ingresa un número positivo.",
+    "date": "Ingresa una fecha válida.",
+    "url": "Ingresa una URL válida."
+  },
+  "notifications": {
+    "title": "Notificaciones",
+    "markAllRead": "Marcar todo como leído",
+    "empty": "No tienes notificaciones.",
+    "newReading": "Nueva lectura registrada para el medidor {meter}.",
+    "certificateIssued": "Certificado {id} emitido.",
+    "certificateRetired": "Certificado {id} retirado.",
+    "proposalCreated": "Nueva propuesta: {title}."
+  },
+  "pagination": {
+    "page": "Página {current} de {total}",
+    "first": "Primera página",
+    "last": "Última página",
+    "next": "Página siguiente",
+    "previous": "Página anterior",
+    "showing": "Mostrando {from}–{to} de {total}"
+  },
+  "units": {
+    "kwh": "kWh",
+    "mwh": "MWh",
+    "wh": "Wh",
+    "co2Avoided": "CO₂ evitado",
+    "energy": "Energía"
+  },
+  "dates": {
+    "today": "Hoy",
+    "yesterday": "Ayer",
+    "last7Days": "Últimos 7 días",
+    "last30Days": "Últimos 30 días",
+    "thisMonth": "Este mes",
+    "thisYear": "Este año",
+    "custom": "Personalizado"
+  }
   "common": {
     "loading": "Cargando…",
     "error": "Algo salió mal.",

@@ -23,6 +23,13 @@ describe('LanguageSwitcher', () => {
     vi.unstubAllGlobals()
   })
 
+  it('displays the Español option in the language switcher', () => {
+    render(<LanguageSwitcher current="en" />)
+
+    const options = screen.getAllByRole('option')
+    expect(options.map((option) => option.textContent)).toContain('Español')
+  })
+
   it('persists the selected locale through the API before refreshing', async () => {
     fetchMock.mockResolvedValue({ ok: true })
     render(<LanguageSwitcher current="en" />)

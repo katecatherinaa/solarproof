@@ -4,6 +4,14 @@ import { useTransition, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { locales, LOCALE_LABELS, LOCALE_NAMES, type Locale } from '@/lib/locales'
 
+// Display labels for the language switcher. Kept explicit so the Spanish
+// option always renders as "Español" regardless of the active locale.
+const SWITCHER_LABELS: Record<Locale, string> = {
+  en: 'English',
+  fr: 'Français',
+  es: 'Español',
+}
+
 interface Props {
   current: Locale
 }
@@ -23,6 +31,11 @@ export function LanguageSwitcher({ current }: Props) {
         body: JSON.stringify({ locale }),
       })
       if (!response.ok) throw new Error('Failed to save locale')
+
+      // Mirror the server-set cookie on the client so the locale is applied
+      // immediately (and survives a refresh) even before the API response
+      // is processed by middleware.
+      document.cookie = `locale=${locale}; path=/; max-age=${60 * 60 * 24 * 365}; samesite=lax`
 
       setAnnouncement(`Language changed to ${LOCALE_NAMES[locale]}`)
       startTransition(() => router.refresh())
@@ -51,7 +64,7 @@ export function LanguageSwitcher({ current }: Props) {
       >
         {locales.map((l) => (
           <option key={l} value={l}>
-            {LOCALE_LABELS[l]} — {LOCALE_NAMES[l]}
+            {SWITCHER_LABELS[l] ?? LOCALE_LABELS[l]} — {LOCALE_NAMES[l]}
           </option>
         ))}
       </select>

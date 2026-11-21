@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Search, CheckCircle, XCircle, Shield, ExternalLink, Copy, Download } from 'lucide-react'
+import { Search, CheckCircle, XCircle, Shield, ExternalLink, Copy, Download, Code } from 'lucide-react'
 import { SectionSkeleton } from '@/components/skeleton'
 import { CopyableText } from '@/components/copy-button'
 import { writeToClipboard } from '@/components/copy-button'
@@ -105,6 +105,26 @@ function buildSteps(data: ChainOfCustody): Step[] {
 
 const KIOSK_INACTIVITY_MS = 60_000
 
+const EMBED_SANDBOX = 'allow-scripts allow-popups allow-popups-to-escape-sandbox'
+const EMBED_WIDTH = 360
+const EMBED_HEIGHT = 420
+
+function buildEmbedCode(certificateId: string, origin: string): string {
+  const src = `${origin}/embed/certificate/${encodeURIComponent(certificateId)}`
+  return [
+    `<iframe`,
+    `  src="${src}"`,
+    `  title="SolarProof verified green energy certificate"`,
+    `  width="${EMBED_WIDTH}"`,
+    `  height="${EMBED_HEIGHT}"`,
+    `  style="border:0;max-width:100%"`,
+    `  loading="lazy"`,
+    `  sandbox="${EMBED_SANDBOX}"`,
+    `  referrerpolicy="no-referrer-when-downgrade"`,
+    `></iframe>`,
+  ].join('\n')
+}
+
 export default function VerifyPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -114,6 +134,7 @@ export default function VerifyPage() {
   const [pageError, setPageError] = useState<Error | null>(null)
   const [loading, setLoading] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [embedCopied, setEmbedCopied] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
   const { pushToast } = useToast()
   const inactivityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -124,6 +145,7 @@ export default function VerifyPage() {
     setPageError(null)
     setLoading(false)
     setCopied(false)
+    setEmbedCopied(false)
     setDownloadError(null)
     router.replace('/verify?kiosk=1')
   }, [router])
@@ -221,8 +243,25 @@ export default function VerifyPage() {
     }
   }
 
+  async function copyEmbedCode() {
+    if (!result) return
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const code = buildEmbedCode(result.certificate.id, origin)
+    try {
+      await writeToClipboard(code)
+      setEmbedCopied(true)
+      pushToast({ variant: 'success', title: 'Embed code copied', description: 'Paste it into your site’s HTML.' })
+      setTimeout(() => setEmbedCopied(false), 2000)
+    } catch {
+      pushToast({ variant: 'error', title: 'Copy failed', description: 'Select the code below and copy it manually.' })
+    }
+  }
+
   const steps = result ? buildSteps(result) : null
   const allPass = steps?.every((s) => s.status !== 'fail')
+  const embedCode = result && typeof window !== 'undefined'
+    ? buildEmbedCode(result.certificate.id, window.location.origin)
+    : ''
 
   const containerClass = kiosk
     ? 'min-h-screen w-full px-6 py-10 sm:px-10 sm:py-14'
@@ -438,6 +477,29 @@ export default function VerifyPage() {
                 value={new Date(result.meter_proof.timestamp).toLocaleString()}
               />
               <Row label="Ed25519 verified" value="✓ Valid" />
+            </Section>
+          )}
+
+          {/* Embed code generator */}
+          {!kiosk && (
+            <Section title="Embed this certificate">
+              <div className="space-y-3">
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Paste this snippet into any website to show a verified green energy widget that links back to SolarProof.
+                </p>
+                <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-xs text-gray-700 dark:bg-gray-950 dark:text-gray-300">
+                  <code>{embedCode}</code>
+                </pre>
+                <button
+                  onClick={copyEmbedCode}
+                  aria-label="Copy iframe embed code"
+                  aria-pressed={embedCopied}
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-yellow-400 focus:ring-offset-2 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  <Code className="h-4 w-4" aria-hidden="true" />
+                  <span aria-live="polite">{embedCopied ? 'Copied!' : 'Copy embed code'}</span>
+                </button>
+              </div>
             </Section>
           )}
 
