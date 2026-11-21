@@ -85,6 +85,47 @@ export function CertificateListSkeleton({ count = 6 }: { count?: number }) {
   )
 }
 
+/** Skeleton that matches a single certificate table row */
+export function CertificateRowSkeleton({ cols = 5 }: { cols?: number }) {
+  return (
+    <tr aria-hidden="true">
+      {Array.from({ length: cols }).map((_, i) => (
+        <td key={i} className="px-4 py-3">
+          <Skeleton className="h-4 w-full" />
+        </td>
+      ))}
+    </tr>
+  )
+}
+
+/** Skeleton for the certificate table — header plus N skeleton rows */
+export function CertificateTableSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="Loading certificates"
+      className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"
+    >
+      <table className="w-full text-left text-sm">
+        <thead className="border-b border-gray-200 dark:border-gray-800">
+          <tr>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <th key={i} scope="col" className="px-4 py-3">
+                <Skeleton className="h-4 w-20" />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+          {Array.from({ length: rows }).map((_, i) => (
+            <CertificateRowSkeleton key={i} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 /** Skeleton that matches a governance proposal card */
 export function ProposalCardSkeleton() {
   return (

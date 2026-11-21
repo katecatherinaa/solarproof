@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ShieldOff, ShieldCheck, Zap, Award, Activity } from 'lucide-react'
+import { ShieldOff, ShieldCheck, Zap, Award, Activity, Menu, X } from 'lucide-react'
 import { StatCardSkeleton, TableRowSkeleton } from '@/components/skeleton'
 
 interface Operator {
@@ -61,7 +61,54 @@ export default function AdminPage() {
   const { token, saveToken } = useAdminToken()
   const [draft, setDraft] = useState('')
   const [authed, setAuthed] = useState(!!token)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const drawerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
   const qc = useQueryClient()
+
+  // Close the drawer and restore focus to the trigger.
+  function closeDrawer() {
+    setDrawerOpen(false)
+    triggerRef.current?.focus()
+  }
+
+  // Escape-to-close and focus trap while the drawer is open.
+  useEffect(() => {
+    if (!drawerOpen) return
+    const node = drawerRef.current
+    if (!node) return
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeDrawer()
+        return
+      }
+      if (e.key !== 'Tab') return
+      const focusable = node!.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown)
+    // Move initial focus into the drawer.
+    const initial = node.querySelector<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+    initial?.focus()
+
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [drawerOpen])
 
   const {
     data: operators,
@@ -143,9 +190,22 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8">
-      <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Admin</h1>
+    <div className="mx-auto w-full max-w-5xl overflow-x-hidden px-4 py-8">
+      <div className="mb-8 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open admin navigation"
+            aria-expanded={drawerOpen}
+            aria-controls="admin-drawer"
+            className="inline-flex items-center justify-center rounded-lg border border-gray-300 p-2 text-gray-700 hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 md:hidden dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            <Menu className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Admin</h1>
+        </div>
         <button
           onClick={() => { saveToken(''); setAuthed(false) }}
           className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
@@ -153,6 +213,53 @@ export default function AdminPage() {
           Sign out
         </button>
       </div>
+
+      {/* Off-canvas navigation drawer (hidden at md and above) */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-40 md:hidden">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={closeDrawer}
+            aria-hidden="true"
+          />
+          <div
+            id="admin-drawer"
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Admin navigation"
+            className="absolute inset-y-0 left-0 flex w-64 max-w-[80vw] flex-col bg-white p-4 shadow-xl dark:bg-gray-900"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">Navigation</span>
+              <button
+                type="button"
+                onClick={closeDrawer}
+                aria-label="Close admin navigation"
+                className="inline-flex items-center justify-center rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 dark:text-gray-400 dark:hover:bg-gray-800"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
+            <nav className="flex flex-col gap-1">
+              <a
+                href="#stats-heading"
+                onClick={closeDrawer}
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                System stats
+              </a>
+              <a
+                href="#operators-heading"
+                onClick={closeDrawer}
+                className="rounded-lg px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                Operators
+              </a>
+            </nav>
+          </div>
+        </div>
+      )}
 
       {/* System stats */}
       <section aria-labelledby="stats-heading" className="mb-8">
@@ -198,7 +305,7 @@ export default function AdminPage() {
             {(opsError as Error).message}
           </p>
         )}
-        <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
           <table
             className="min-w-full divide-y divide-gray-200 bg-white text-sm dark:divide-gray-800 dark:bg-gray-900"
             aria-label="Operators"
@@ -228,7 +335,7 @@ export default function AdminPage() {
                 operators.map((op) => (
                   <tr key={op.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                     <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-100">{op.name}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-400 max-w-[180px] truncate">
+                    <td className="max-w-[180px] truncate px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-400">
                       {op.admin_address}
                     </td>
                     <td className="px-4 py-3">

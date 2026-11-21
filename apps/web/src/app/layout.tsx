@@ -33,6 +33,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang={locale} dir={LOCALE_DIRECTIONS[locale as Locale]} suppressHydrationWarning>
+      <head>
+        <script
+          // Runs before hydration to apply the persisted/system theme and avoid FOUC.
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('solarproof-theme');var d=t==='dark'||((t===null||t==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className={inter.className}>
         <a
           href="#main-content"

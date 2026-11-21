@@ -25,16 +25,34 @@ function isAlreadyAnchoredError(error: unknown): boolean {
 // IP rate limit: 10 POSTs per 60 s per IP
 const IP_RATE_LIMIT = 10
 const IP_RATE_WINDOW_MS = 60_000
+const PAGE_SIZES = [25, 50, 100] as const
+const DEFAULT_PAGE_SIZE = 50
+
 const QuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20),
+  // Offset-based pagination (preferred)
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce
+    .number()
+    .int()
+    .refine((v) => (PAGE_SIZES as readonly number[]).includes(v), {
+      message: `page_size must be one of ${PAGE_SIZES.join(', ')}`,
+    })
+    .default(DEFAULT_PAGE_SIZE),
+  // Legacy cursor-based pagination (kept for backward compatibility)
+  limit: z.coerce.number().int().min(1).max(100).optional(),
   cursor: z.string().optional(),
 })
 
 /**
  * GET /api/v1/readings
  *
- * Cursor-based pagination via `cursor` (ISO timestamp) and `limit` (max 100).
- * Returns `{ data, next_cursor, total }`.
+ * Offset-based pagination via `page` (>=1) and `page_size` (25/50/100, default 50).
+ * Returns `{ data, total, page, page_size }`.
+ *
+ * Legacy cursor-based pagination via `cursor` (ISO timestamp) and `limit` (max 100)
+ * is still supported for backward compatibility; when a `cursor` is supplied the
+ * response additionally includes `next_cursor`.
+ *
  * Requires operator JWT.
  */
 export async function GET(req: NextRequest) {
@@ -52,25 +70,58 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const { limit, cursor } = parsedQuery.data
+  const { page, page_size, cursor } = parsedQuery.data
   const db = createServiceClient()
 
-  // Total count (for UI pagination)
+  // Total count (for UI pagination). `head: true` avoids transferring rows and
+  // relies on the planner's count strategy, keeping this cheap for large tables.
   const { count } = await db
     .from('readings')
     .select('id', { count: 'exact', head: true })
 
-  let query = db
+  const total = count ?? 0
+
+  // Legacy cursor mode: fetch limit+1 rows after the cursor.
+  if (cursor) {
+    const limit = parsedQuery.data.limit ?? page_size
+    const { data, error } = await db
+      .from('readings')
+      .select('id, meter_id, kwh, timestamp, reading_hash, anchored, minted, anchor_tx_hash, mint_tx_hash')
+      .order('timestamp', { ascending: false })
+      .lt('timestamp', cursor)
+      .limit(limit + 1)
+
+    if (error) {
+      return NextResponse.json(
+        { error: 'Failed to fetch readings', code: ErrorCategory.DB_QUERY },
+        { status: 500 }
+      )
+    }
+
+    const rows = data ?? []
+    const hasMore = rows.length > limit
+    const pageRows = hasMore ? rows.slice(0, limit) : rows
+    const next_cursor = hasMore ? (pageRows.length > 0 ? pageRows[pageRows.length - 1].timestamp : null) : null
+
+    return NextResponse.json({
+      data: pageRows,
+      next_cursor,
+      total,
+      page,
+      page_size,
+    })
+  }
+
+  // Offset-based pagination.
+  const from = (page - 1) * page_size
+  const to = from + page_size - 1
+
+  const { data, error } = await db
     .from('readings')
     .select('id, meter_id, kwh, timestamp, reading_hash, anchored, minted, anchor_tx_hash, mint_tx_hash')
     .order('timestamp', { ascending: false })
-    .limit(limit + 1) // fetch one extra to determine if there's a next page
+    .range(from, to)
 
-  if (cursor) {
-    query = query.lt('timestamp', cursor)
-  }
-
-  const { data, error } = await query
   if (error) {
     return NextResponse.json(
       { error: 'Failed to fetch readings', code: ErrorCategory.DB_QUERY },
@@ -78,12 +129,12 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const rows = data ?? []
-  const hasMore = rows.length > limit
-  const page = hasMore ? rows.slice(0, limit) : rows
-  const next_cursor = hasMore ? (page.length > 0 ? page[page.length - 1].timestamp : null) : null
-
-  return NextResponse.json({ data: page, next_cursor, total: count ?? 0 })
+  return NextResponse.json({
+    data: data ?? [],
+    total,
+    page,
+    page_size,
+  })
 }
 
 const MetadataSchema = z.object({

@@ -6,9 +6,10 @@ import SettingsPage from '@/app/settings/page'
 
 const setTheme = vi.fn()
 let resolvedTheme = 'light'
+let theme = 'system'
 
 vi.mock('next-themes', () => ({
-  useTheme: () => ({ resolvedTheme, setTheme }),
+  useTheme: () => ({ resolvedTheme, theme, setTheme }),
 }))
 
 vi.mock('@tanstack/react-query', () => ({
@@ -18,10 +19,53 @@ vi.mock('@tanstack/react-query', () => ({
 describe('SettingsPage theme control', () => {
   beforeEach(() => {
     resolvedTheme = 'light'
+    theme = 'system'
     setTheme.mockReset()
+    window.localStorage.clear()
   })
 
-  it('exposes an accessible theme button and switches to dark mode', () => {
+  it('defaults to system mode when no preference is stored', () => {
+    render(<SettingsPage />)
+
+    const button = screen.getByRole('button', { name: 'Switch to dark mode' })
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(window.localStorage.getItem('theme')).toBeNull()
+  })
+
+  it('cycles light → dark → system and calls setTheme with each mode', () => {
+    theme = 'light'
+    const { rerender } = render(<SettingsPage />)
+
+    let button = screen.getByRole('button', { name: 'Switch to dark mode' })
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(button)
+    expect(setTheme).toHaveBeenLastCalledWith('dark')
+
+    theme = 'dark'
+    resolvedTheme = 'dark'
+    rerender(<SettingsPage />)
+
+    button = screen.getByRole('button', { name: 'Switch to system mode' })
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+
+    fireEvent.click(button)
+    expect(setTheme).toHaveBeenLastCalledWith('system')
+
+    theme = 'system'
+    resolvedTheme = 'light'
+    rerender(<SettingsPage />)
+
+    button = screen.getByRole('button', { name: 'Switch to light mode' })
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(button)
+    expect(setTheme).toHaveBeenLastCalledWith('light')
+  })
+
+  it('switches to dark mode from system mode', () => {
+    theme = 'system'
+    resolvedTheme = 'light'
     render(<SettingsPage />)
 
     const button = screen.getByRole('button', { name: 'Switch to dark mode' })
@@ -33,14 +77,15 @@ describe('SettingsPage theme control', () => {
   })
 
   it('switches back to light mode when dark mode is active', () => {
+    theme = 'dark'
     resolvedTheme = 'dark'
     render(<SettingsPage />)
 
-    const button = screen.getByRole('button', { name: 'Switch to light mode' })
+    const button = screen.getByRole('button', { name: 'Switch to system mode' })
     expect(button.getAttribute('aria-pressed')).toBe('true')
 
     fireEvent.click(button)
 
-    expect(setTheme).toHaveBeenCalledWith('light')
+    expect(setTheme).toHaveBeenCalledWith('system')
   })
 })

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Sun, Moon, Menu, X, Wallet, LogOut } from 'lucide-react'
+import { Sun, Moon, Monitor, Menu, X, Wallet, LogOut } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useRef, useState } from 'react'
 import { useWallet } from '@/hooks/useWallet'
@@ -62,7 +62,7 @@ function NetworkBadge() {
 export function Navbar({ locale }: NavbarProps) {
   const t = useTranslations('nav')
   const pathname = usePathname()
-  const { resolvedTheme, setTheme } = useTheme()
+  const { theme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -74,8 +74,19 @@ export function Navbar({ locale }: NavbarProps) {
     setMounted(true)
   }, [])
 
-  function toggleTheme() {
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
+  const themeModes = ['light', 'dark', 'system'] as const
+  type ThemeMode = (typeof themeModes)[number]
+
+  function cycleTheme() {
+    const current = (theme ?? 'system') as ThemeMode
+    const next = themeModes[(themeModes.indexOf(current) + 1) % themeModes.length]
+    setTheme(next)
+  }
+
+  function themeModeLabel(mode: ThemeMode) {
+    if (mode === 'light') return t('switchLight')
+    if (mode === 'dark') return t('switchDark')
+    return t('switchSystem')
   }
 
   // Close menu on route change
@@ -194,24 +205,36 @@ export function Navbar({ locale }: NavbarProps) {
             )
           )}
 
-          {/* Dark mode toggle — suppress until mounted to avoid hydration mismatch */}
-          <button
-            onClick={toggleTheme}
-            aria-label={
-              mounted
-                ? resolvedTheme === 'dark'
-                  ? t('switchLight')
-                  : t('switchDark')
-                : 'Toggle theme'
-            }
-            className="rounded-md p-2 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-          >
-            {mounted && resolvedTheme === 'dark' ? (
-              <Sun className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <Moon className="h-4 w-4" aria-hidden="true" />
-            )}
-          </button>
+          {/* Theme mode toggle (light / dark / system) — suppress until mounted to avoid hydration mismatch */}
+          {mounted && (
+            <div
+              role="group"
+              aria-label={t('themeMode')}
+              className="flex items-center rounded-md border border-gray-200 p-0.5 dark:border-gray-700"
+            >
+              {themeModes.map((mode) => {
+                const active = (theme ?? 'system') === mode
+                const Icon = mode === 'light' ? Sun : mode === 'dark' ? Moon : Monitor
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setTheme(mode)}
+                    aria-pressed={active}
+                    aria-label={themeModeLabel(mode)}
+                    title={themeModeLabel(mode)}
+                    className={`rounded p-1.5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-500 ${
+                      active
+                        ? 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100'
+                        : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                )
+              })}
+            </div>
+          )}
 
           {/* Hamburger — mobile only */}
           <button
@@ -262,12 +285,35 @@ export function Navbar({ locale }: NavbarProps) {
             <div className="mt-4 rounded-2xl bg-gray-50 p-3 dark:bg-gray-950/80">
               <div className="flex flex-wrap items-center gap-2">
                 <NetworkBadge />
-                <button
-                  onClick={toggleTheme}
-                  className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 transition hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
-                >
-                  {mounted && resolvedTheme === 'dark' ? 'Light mode' : 'Dark mode'}
-                </button>
+                {mounted && (
+                  <div
+                    role="group"
+                    aria-label={t('themeMode')}
+                    className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-900"
+                  >
+                    {themeModes.map((mode) => {
+                      const active = (theme ?? 'system') === mode
+                      const Icon = mode === 'light' ? Sun : mode === 'dark' ? Moon : Monitor
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setTheme(mode)}
+                          aria-pressed={active}
+                          aria-label={themeModeLabel(mode)}
+                          className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-500 ${
+                            active
+                              ? 'bg-gray-100 font-medium text-gray-900 dark:bg-gray-800 dark:text-gray-100'
+                              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                          {themeModeLabel(mode)}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {mounted && !walletLoading && (

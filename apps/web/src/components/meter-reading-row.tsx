@@ -6,9 +6,9 @@ interface MeterReadingRowProps {
   verified: boolean
 }
 
-export function MeterReadingRow({ id, meter_id, kwh, timestamp, verified }: MeterReadingRowProps) {
+export function MeterReadingRow({ meter_id, kwh, timestamp, verified }: MeterReadingRowProps) {
   return (
-    <tr key={id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40">
+    <tr className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40">
       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">{meter_id}</td>
       <td className="px-4 py-3 text-gray-900 dark:text-gray-100">{kwh.toFixed(3)}</td>
       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">

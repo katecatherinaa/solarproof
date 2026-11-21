@@ -38,6 +38,53 @@ async function fetchCertificates(params: URLSearchParams): Promise<CertificatesR
   return res.json()
 }
 
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+
+const SKELETON_COLUMNS = [
+  'Certificate ID',
+  'Meter ID',
+  'kWh',
+  'Issued',
+  'Status',
+  'Action',
+]
+
+/**
+ * Placeholder table that mirrors the real certificate table's structure and
+ * dimensions so there is no layout shift when data resolves.
+ */
+function CertificateTableSkeleton() {
+  return (
+    <table
+      className="min-w-full divide-y divide-gray-200 bg-white text-sm dark:divide-gray-800 dark:bg-gray-900"
+      aria-label="Loading certificates"
+      aria-busy="true"
+    >
+      <thead>
+        <tr className="bg-gray-50 dark:bg-gray-800/50">
+          <th scope="col" className="px-4 py-3">
+            <div className="h-4 w-4 rounded bg-gray-200 dark:bg-gray-700" aria-hidden="true" />
+          </th>
+          {SKELETON_COLUMNS.map((h) => (
+            <th
+              key={h}
+              scope="col"
+              className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
+            >
+              {h}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <TableRowSkeleton key={i} cols={7} />
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 // ── Bulk Retire Confirmation Modal ─────────────────────────────────────────────
 
 function BulkRetireConfirmModal({
@@ -456,6 +503,9 @@ export default function CertificatesPage() {
         <ErrorBoundary inline label="Certificate table">
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
           <div className="overflow-x-auto">
+            {isLoading ? (
+              <CertificateTableSkeleton />
+            ) : (
             <table
               className="min-w-full divide-y divide-gray-200 bg-white text-sm dark:divide-gray-800 dark:bg-gray-900"
               aria-label="Energy certificates"
@@ -484,13 +534,7 @@ export default function CertificatesPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                {isLoading ? (
-                  <>
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <TableRowSkeleton key={i} cols={7} />
-                    ))}
-                  </>
-                ) : data.length > 0 ? (
+                {data.length > 0 ? (
                   data.map((cert) => (
                     <tr key={cert.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
                       <td className="px-4 py-3">
@@ -569,6 +613,7 @@ export default function CertificatesPage() {
                 )}
               </tbody>
             </table>
+            )}
           </div>
         </div>
         </ErrorBoundary>
