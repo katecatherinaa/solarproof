@@ -5,6 +5,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 snapshot_dirs=(
+  apps/contracts/snapshots
   apps/contracts/energy_token/test_snapshots
   apps/contracts/audit_registry/test_snapshots
   apps/contracts/community_governance/test_snapshots

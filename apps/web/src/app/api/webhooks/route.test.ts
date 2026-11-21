@@ -231,3 +231,211 @@ describe('POST /api/webhooks — SSRF protection (issue #767)', () => {
     expect(json.error).toMatch(/url|blocked|private|not allowed/i)
   })
 })
+
+// ── Delivery & retry integration tests (issue #744) ──────────────────────────
+//
+// These tests exercise the outbound delivery path in @/lib/webhooks by mocking
+// global fetch as a fake HTTP receiver. They assert:
+//  1. A 2xx on the first attempt → exactly one fetch call, 'delivered' logged.
+//  2. A non-2xx response triggers retries with exponential backoff (1s, 2s, 4s, 8s).
+//  3. The outbound request carries a valid X-SolarProof-Signature header.
+//  4. After 5 consecutive failures the webhook is recorded in dead-letter state.
+
+describe('webhook delivery & retry (issue #744)', () => {
+  // Captured Supabase writes so we can assert dead-letter state.
+  const supabaseUpdates: Array<{ table: string; payload: Record<string, unknown> }> = []
+  const supabaseInserts: Array<{ table: string; payload: Record<string, unknown> }> = []
+
+  let fetchMock: ReturnType<typeof vi.fn>
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>
+
+  const SECRET = 'delivery-secret-longer-than-sixteen'
+  const PAYLOAD = { event: 'anchor', cooperative_id: '00000000-0000-0000-0000-000000000001' }
+  const TARGET_URL = 'https://example.com/hook'
+
+  beforeEach(() => {
+    supabaseUpdates.length = 0
+    supabaseInserts.length = 0
+    mockDnsLookup.mockReset()
+    mockLookupTo('93.184.216.34')
+    mockWebhookSecret = 'super-secret-value-xyz'
+
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    consoleLogSpy.mockRestore()
+    consoleErrorSpy.mockRestore()
+    vi.resetModules()
+  })
+
+  // Build a chainable Supabase mock that records update/insert calls.
+  function buildSupabaseMock() {
+    const recordUpdate = (table: string) => (payload: Record<string, unknown>) => {
+      supabaseUpdates.push({ table, payload })
+      return {
+        eq: () => ({
+          eq: async () => ({ data: null, error: null }),
+        }),
+      }
+    }
+    const recordInsert = (table: string) => (payload: Record<string, unknown>) => {
+      supabaseInserts.push({ table, payload })
+      return {
+        select: () => ({
+          single: async () => ({ data: { id: 'dl-id-1', ...payload }, error: null }),
+        }),
+      }
+    }
+    return {
+      from: (table: string) => ({
+        update: recordUpdate(table),
+        insert: recordInsert(table),
+        select: () => ({
+          eq: () => ({
+            order: async () => ({ data: [], error: null }),
+            single: async () => ({ data: null, error: null }),
+          }),
+        }),
+      }),
+    }
+  }
+
+  async function loadDelivery() {
+    vi.doMock('@/lib/supabase', () => ({
+      createServiceClient: () => buildSupabaseMock(),
+    }))
+    const mod = await import('@/lib/webhooks')
+    return mod
+  }
+
+  function computeOutboundSig(secret: string, payload: unknown): string {
+    return createHmac('sha256', secret)
+      .update(JSON.stringify(payload))
+      .digest('hex')
+  }
+
+  it('delivers successfully on the first attempt with a single fetch call', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('ok', { status: 200 }))
+    const { deliverWebhook } = await loadDelivery()
+
+    await deliverWebhook({
+      url: TARGET_URL,
+      secret: SECRET,
+      payload: PAYLOAD,
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const logged = consoleLogSpy.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(logged).toMatch(/delivered/i)
+    // No dead-letter writes on success.
+    expect(supabaseUpdates).toHaveLength(0)
+    expect(supabaseInserts).toHaveLength(0)
+  })
+
+  it('retries with exponential backoff (1s, 2s, 4s, 8s) on non-2xx responses', async () => {
+    vi.useFakeTimers()
+    // Four failures then a success on the fifth attempt.
+    fetchMock
+      .mockResolvedValueOnce(new Response('err', { status: 500 }))
+      .mockResolvedValueOnce(new Response('err', { status: 500 }))
+      .mockResolvedValueOnce(new Response('err', { status: 500 }))
+      .mockResolvedValueOnce(new Response('err', { status: 500 }))
+      .mockResolvedValueOnce(new Response('ok', { status: 200 }))
+
+    const { deliverWebhook } = await loadDelivery()
+
+    const delivery = deliverWebhook({
+      url: TARGET_URL,
+      secret: SECRET,
+      payload: PAYLOAD,
+    })
+
+    // First attempt happens immediately.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Backoff #1: 1s
+    await vi.advanceTimersByTimeAsync(999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    // Backoff #2: 2s
+    await vi.advanceTimersByTimeAsync(1999)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    // Backoff #3: 4s
+    await vi.advanceTimersByTimeAsync(3999)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+
+    // Backoff #4: 8s
+    await vi.advanceTimersByTimeAsync(7999)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+
+    await delivery
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+  })
+
+  it('signs the outbound request with a valid HMAC-SHA256 signature', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('ok', { status: 200 }))
+    const { deliverWebhook } = await loadDelivery()
+
+    await deliverWebhook({
+      url: TARGET_URL,
+      secret: SECRET,
+      payload: PAYLOAD,
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const headers = new Headers(init.headers as HeadersInit)
+    const sig = headers.get('x-solarproof-signature')
+    expect(sig).toBeTruthy()
+
+    const expected = computeOutboundSig(SECRET, PAYLOAD)
+    expect(sig).toBe(expected)
+  })
+
+  it('moves the webhook to dead-letter state after 5 consecutive failures', async () => {
+    vi.useFakeTimers()
+    fetchMock.mockResolvedValue(new Response('err', { status: 500 }))
+
+    const { deliverWebhook } = await loadDelivery()
+
+    const delivery = deliverWebhook({
+      url: TARGET_URL,
+      secret: SECRET,
+      payload: PAYLOAD,
+    })
+
+    // Advance through all backoff windows: 1s + 2s + 4s + 8s = 15s.
+    await vi.advanceTimersByTimeAsync(15_000)
+    await delivery
+
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+
+    // Dead-letter state must be recorded via the mocked Supabase client.
+    const deadLetterWrite = [...supabaseUpdates, ...supabaseInserts].find((w) => {
+      const serialized = JSON.stringify(w.payload)
+      return /dead[_-]?letter/i.test(serialized)
+    })
+    expect(deadLetterWrite).toBeDefined()
+
+    const errored = consoleErrorSpy.mock.calls.map((c) => String(c[0])).join('\n')
+    expect(errored).toMatch(/dead[_-]?letter|failed|exhausted/i)
+  })
+})
