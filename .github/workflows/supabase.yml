@@ -10,6 +10,7 @@ on:
     paths:
       - 'supabase/**'
       - 'scripts/check-migration-drift.sh'
+      - 'scripts/check-migration-rollback.sh'
 
 jobs:
   validate:
@@ -40,6 +41,46 @@ jobs:
             fi
           done
           exit $missing
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop
+
+  migration-rollback:
+    name: Migration rollback test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase local stack
+        run: supabase start
+
+      - name: Apply all migrations (forward)
+        run: supabase db reset
+
+      - name: Run migration rollback check
+        env:
+          # Point to the local Supabase instance started above.
+          # supabase start exposes postgres on port 54322 by default.
+          DATABASE_URL: postgresql://postgres:postgres@localhost:54322/postgres
+        run: |
+          echo "### Migration Rollback Test" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if bash scripts/check-migration-rollback.sh; then
+            echo "✅ All rollback scripts applied cleanly and schema returned to previous state." >> "$GITHUB_STEP_SUMMARY"
+          else
+            EXIT_CODE=$?
+            echo "❌ Migration rollback test failed — see logs above." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Action required:** A rollback script is broken or does not restore the previous schema." >> "$GITHUB_STEP_SUMMARY"
+            echo "Fix the rollback in supabase/migrations/rollbacks/ before merging." >> "$GITHUB_STEP_SUMMARY"
+            exit $EXIT_CODE
+          fi
 
       - name: Stop Supabase local stack
         if: always()
