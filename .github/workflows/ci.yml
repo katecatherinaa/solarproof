@@ -71,6 +71,11 @@ jobs:
       - name: Run tests with coverage
         run: pnpm vitest run --coverage
         working-directory: apps/web
+      - name: OpenAPI contract tests (schema drift)
+        run: pnpm --filter @solarproof/web exec vitest run src/__tests__/contract
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:

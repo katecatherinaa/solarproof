@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, develop]
 
+env:
+  MUTATION_THRESHOLD: 70
+
 jobs:
   mutation:
     name: Stryker Mutation Testing
@@ -29,7 +32,91 @@ jobs:
 
       - name: Run mutation tests
         working-directory: apps/web
-        run: npx stryker run --concurrency 1
+        run: npx stryker run --concurrency 1 --reporters json,clear-text,progress
+
+      - name: Compute mutation score
+        id: score
+        if: always()
+        working-directory: apps/web
+        run: |
+          REPORT="reports/mutation/report.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "::warning::Mutation report not found at $REPORT"
+            echo "score=0" >> "$GITHUB_OUTPUT"
+            echo "survivors=0" >> "$GITHUB_OUTPUT"
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            echo "summary=No mutation report was generated." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          node - "$REPORT" <<'EOF'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+
+          let killed = 0;
+          let total = 0;
+          const survivors = [];
+
+          for (const [file, data] of Object.entries(report.files || {})) {
+            for (const mutant of data.mutants || []) {
+              if (mutant.status === 'NoCoverage' || mutant.status === 'Ignored') continue;
+              total += 1;
+              if (mutant.status === 'Killed' || mutant.status === 'Timeout') {
+                killed += 1;
+              } else if (mutant.status === 'Survived') {
+                survivors.push({
+                  file,
+                  mutator: mutant.mutatorName,
+                  line: mutant.location && mutant.location.start ? mutant.location.start.line : '?',
+                });
+              }
+            }
+          }
+
+          const score = total > 0 ? (killed / total) * 100 : 0;
+          const threshold = Number(process.env.MUTATION_THRESHOLD || 70);
+          const passed = score >= threshold;
+
+          const lines = [];
+          lines.push(`### 🧬 Stryker Mutation Report`);
+          lines.push('');
+          lines.push(`**Mutation score:** ${score.toFixed(2)}% (threshold: ${threshold}%)`);
+          lines.push(`**Mutants killed:** ${killed} / ${total}`);
+          lines.push(`**Surviving mutants:** ${survivors.length}`);
+          lines.push('');
+
+          if (survivors.length > 0) {
+            lines.push('<details><summary>Surviving mutants</summary>');
+            lines.push('');
+            lines.push('| File | Mutator | Line |');
+            lines.push('| --- | --- | --- |');
+            for (const s of survivors.slice(0, 100)) {
+              lines.push(`| \`${s.file}\` | ${s.mutator} | ${s.line} |`);
+            }
+            if (survivors.length > 100) {
+              lines.push(`| ... | ... | (${survivors.length - 100} more) |`);
+            }
+            lines.push('');
+            lines.push('</details>');
+            lines.push('');
+          }
+
+          lines.push(passed ? '✅ Mutation score meets the threshold.' : '❌ Mutation score is below the threshold.');
+
+          const summary = lines.join('\n');
+          const out = process.env.GITHUB_OUTPUT;
+          fs.appendFileSync(out, `score=${score.toFixed(2)}\n`);
+          fs.appendFileSync(out, `survivors=${survivors.length}\n`);
+          fs.appendFileSync(out, `passed=${passed}\n`);
+          fs.appendFileSync(out, `summary<<MUTATION_EOF\n${summary}\nMUTATION_EOF\n`);
+          EOF
+
+      - name: Post mutation report to PR
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: stryker-mutation-report
+          message: ${{ steps.score.outputs.summary }}
 
       - name: Upload mutation report
         if: always()
@@ -37,3 +124,15 @@ jobs:
         with:
           name: mutation-report
           path: apps/web/reports/mutation/
+
+      - name: Enforce mutation threshold
+        if: always()
+        env:
+          MUTATION_PASSED: ${{ steps.score.outputs.passed }}
+          MUTATION_SCORE: ${{ steps.score.outputs.score }}
+        run: |
+          if [ "$MUTATION_PASSED" != "true" ]; then
+            echo "::error::Mutation score ${MUTATION_SCORE}% is below the threshold of ${MUTATION_THRESHOLD}%"
+            exit 1
+          fi
+          echo "Mutation score ${MUTATION_SCORE}% meets the threshold of ${MUTATION_THRESHOLD}%"

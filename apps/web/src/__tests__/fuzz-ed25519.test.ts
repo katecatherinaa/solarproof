@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import fc from 'fast-check'
 import { verifyReadingSignature, computeReadingHash } from '@/lib/crypto'
 import { kwhToStroops } from '@solarproof/stellar'
 
@@ -189,4 +190,174 @@ describe('Fuzz: Ed25519 signature verification (issue #106)', () => {
     )
     expect(result).toBe(true)
   })
+})
+
+// ---------------------------------------------------------------------------
+// Property-based fuzz tests (fast-check) — Issue #754
+//
+// Generates arbitrary (meterId, kwh, timestamp) inputs and verifies:
+//  ✓ computeReadingHash never throws for valid input types
+//  ✓ computeReadingHash always returns a 32-byte Buffer
+//  ✓ signing the hash then verifying returns true
+//  ✓ tampering with any field or the signature causes verification to fail
+// ---------------------------------------------------------------------------
+
+/** Arbitrary meter IDs: reasonable length, including unicode. */
+const meterIdArb = fc.string({ minLength: 0, maxLength: 128 })
+
+/** Arbitrary finite, positive kWh values. */
+const kwhArb = fc.double({
+  min: Number.MIN_VALUE,
+  max: 1e12,
+  noNaN: true,
+  noDefaultInfinity: true,
+})
+
+/** Arbitrary int64-safe timestamps (seconds). */
+const timestampArb = fc.bigInt({
+  min: BigInt('-9223372036854775808'),
+  max: BigInt('9223372036854775807'),
+})
+
+/** Arbitrary positive integer stroop amounts (int64-safe). */
+const stroopsArb = fc.bigInt({
+  min: BigInt(0),
+  max: BigInt('9223372036854775807'),
+})
+
+describe('Fuzz: computeReadingHash (fast-check, issue #754)', () => {
+  it('never throws and always returns a 32-byte Buffer for valid inputs', () => {
+    fc.assert(
+      fc.property(meterIdArb, kwhArb, timestampArb, (meterId, kwh, timestamp) => {
+        const stroops = kwhToStroops(kwh)
+        const hash = computeReadingHash(meterId, stroops, timestamp)
+        expect(Buffer.isBuffer(hash)).toBe(true)
+        expect(hash.length).toBe(32)
+      }),
+      { numRuns: 1_000 }
+    )
+  })
+
+  it('never throws for arbitrary integer stroop amounts', () => {
+    fc.assert(
+      fc.property(meterIdArb, stroopsArb, timestampArb, (meterId, stroops, timestamp) => {
+        const hash = computeReadingHash(meterId, stroops, timestamp)
+        expect(Buffer.isBuffer(hash)).toBe(true)
+        expect(hash.length).toBe(32)
+      }),
+      { numRuns: 1_000 }
+    )
+  })
+
+  it('is deterministic for identical inputs', () => {
+    fc.assert(
+      fc.property(meterIdArb, kwhArb, timestampArb, (meterId, kwh, timestamp) => {
+        const stroops = kwhToStroops(kwh)
+        const a = computeReadingHash(meterId, stroops, timestamp)
+        const b = computeReadingHash(meterId, stroops, timestamp)
+        expect(a.equals(b)).toBe(true)
+      }),
+      { numRuns: 500 }
+    )
+  })
+})
+
+describe('Fuzz: sign/verify round-trip (fast-check, issue #754)', () => {
+  it('verifies signatures produced by signing the computed hash', async () => {
+    const { getPublicKey, sign } = await import('@noble/ed25519')
+
+    await fc.assert(
+      fc.asyncProperty(
+        meterIdArb,
+        kwhArb,
+        timestampArb,
+        async (meterId, kwh, timestamp) => {
+          const privKey = randomBytes(32)
+          const pubKey = await getPublicKey(privKey)
+          const hash = computeReadingHash(meterId, kwhToStroops(kwh), timestamp)
+          const sig = await sign(hash, privKey)
+
+          const ok = await verifyReadingSignature(
+            Buffer.from(sig).toString('hex'),
+            hash,
+            Buffer.from(pubKey).toString('hex')
+          )
+          expect(ok).toBe(true)
+        }
+      ),
+      { numRuns: 200 }
+    )
+  }, 120_000)
+
+  it('rejects verification when the signature is tampered with', async () => {
+    const { getPublicKey, sign } = await import('@noble/ed25519')
+
+    await fc.assert(
+      fc.asyncProperty(
+        meterIdArb,
+        kwhArb,
+        timestampArb,
+        async (meterId, kwh, timestamp) => {
+          const privKey = randomBytes(32)
+          const pubKey = await getPublicKey(privKey)
+          const hash = computeReadingHash(meterId, kwhToStroops(kwh), timestamp)
+          const sig = await sign(hash, privKey)
+
+          // Flip one bit in the signature.
+          const tampered = Uint8Array.from(sig)
+          const bitIndex = Math.floor(Math.random() * (tampered.length * 8))
+          tampered[bitIndex >> 3] ^= 1 << (bitIndex & 7)
+
+          const ok = await verifyReadingSignature(
+            Buffer.from(tampered).toString('hex'),
+            hash,
+            Buffer.from(pubKey).toString('hex')
+          )
+          expect(ok).toBe(false)
+        }
+      ),
+      { numRuns: 200 }
+    )
+  }, 120_000)
+
+  it('rejects verification when any reading field is tampered with', async () => {
+    const { getPublicKey, sign } = await import('@noble/ed25519')
+
+    await fc.assert(
+      fc.asyncProperty(
+        meterIdArb,
+        kwhArb,
+        timestampArb,
+        fc.constantFrom('meterId', 'kwh', 'timestamp'),
+        async (meterId, kwh, timestamp, field) => {
+          const privKey = randomBytes(32)
+          const pubKey = await getPublicKey(privKey)
+          const stroops = kwhToStroops(kwh)
+          const hash = computeReadingHash(meterId, stroops, timestamp)
+          const sig = await sign(hash, privKey)
+
+          // Recompute the hash with one field mutated.
+          let tamperedHash: Buffer
+          if (field === 'meterId') {
+            tamperedHash = computeReadingHash(`${meterId}x`, stroops, timestamp)
+          } else if (field === 'kwh') {
+            tamperedHash = computeReadingHash(meterId, stroops + BigInt(1), timestamp)
+          } else {
+            tamperedHash = computeReadingHash(meterId, stroops, timestamp + BigInt(1))
+          }
+
+          // Only meaningful if the tampered hash actually differs.
+          fc.pre(!tamperedHash.equals(hash))
+
+          const ok = await verifyReadingSignature(
+            Buffer.from(sig).toString('hex'),
+            tamperedHash,
+            Buffer.from(pubKey).toString('hex')
+          )
+          expect(ok).toBe(false)
+        }
+      ),
+      { numRuns: 200 }
+    )
+  }, 120_000)
 })
