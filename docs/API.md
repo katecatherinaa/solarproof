@@ -6,6 +6,22 @@ All responses are JSON. Timestamps are ISO 8601 strings unless noted.
 
 ---
 
+## Interactive API playground
+
+An interactive **Swagger UI** playground is available for exploring and testing the API without Postman:
+
+| Resource | URL |
+|---|---|
+| Swagger UI playground | [`/api/docs/ui`](https://solarproof.vercel.app/api/docs/ui) |
+| Raw OpenAPI spec (JSON) | [`/api/docs`](https://solarproof.vercel.app/api/docs) |
+| OpenAPI source | [`openapi.yaml`](../openapi.yaml) |
+
+The playground is rendered from [`openapi.yaml`](../openapi.yaml) and is **enabled in staging and local development** (`http://localhost:3000/api/docs/ui`). It is not gated in production, so the same routes are reachable there.
+
+**Try-it-out** is enabled: expand any operation, click *Try it out*, and the request body is pre-filled with the example values from the spec. Adjust the values and click *Execute* to send a live request.
+
+---
+
 ## Authentication
 
 Endpoints that accept meter readings require an **Ed25519 signature** produced by the registered meter device. The signature is passed in the request body as `signature_hex` — there are no HTTP-level API keys or bearer tokens for this endpoint.

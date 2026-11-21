@@ -166,7 +166,17 @@ node scripts/send-reading.mjs --kwh 12.5 --key ./meter-key.json
 
 > **Building real hardware?** See the [Hardware Meter Integration Guide](docs/HARDWARE_METER_INTEGRATION_GUIDE.md) for the full onboarding quick-start, Ed25519 signing protocol, API specification, and meter certification checklist.
 
+### API Documentation
+
+An interactive API playground (Redoc / Swagger UI) is rendered from [`openapi.yaml`](openapi.yaml) at **`/api/docs/ui`** — available in local development and staging (not gated in production).
+
+- Local: http://localhost:3000/api/docs/ui
+- Staging: https://staging.solarproof.app/api/docs/ui
+
+Try-it-out is enabled with pre-filled example values, so you can explore and test endpoints without Postman. See also [docs/API.md](docs/API.md).
+
 ---
+=======
 
 ## Monorepo Structure
 

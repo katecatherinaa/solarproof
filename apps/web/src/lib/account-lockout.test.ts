@@ -82,6 +82,46 @@ describe('account-lockout', () => {
     expect(justLocked).toBe(true)
   })
 
+  it('triggers the lock on the 5th failure within the window', async () => {
+    mockRedis.incr.mockResolvedValue(5)
+    const justLocked = await recordFailedAttempt('user@example.com')
+    expect(justLocked).toBe(true)
+    expect(mockRedis.set).toHaveBeenCalledWith(
+      'lockout:user@example.com',
+      '1',
+      'EX',
+      LOCKOUT_SECONDS
+    )
+  })
+
+  it('does not trigger a lock on the 6th failure after the window reset', async () => {
+    // After the window expires the counter is reset, so the next failure is #1.
+    mockRedis.incr.mockResolvedValue(1)
+    const justLocked = await recordFailedAttempt('user@example.com')
+    expect(justLocked).toBe(false)
+    expect(mockRedis.set).not.toHaveBeenCalled()
+  })
+
+  it('handles concurrent increments atomically without double-locking', async () => {
+    // Redis INCR is atomic; simulate several concurrent failures resolving to
+    // distinct counter values and assert only the threshold crossing locks.
+    mockRedis.incr
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce(4)
+      .mockResolvedValueOnce(5)
+      .mockResolvedValueOnce(6)
+
+    const results = await Promise.all([
+      recordFailedAttempt('user@example.com'),
+      recordFailedAttempt('user@example.com'),
+      recordFailedAttempt('user@example.com'),
+      recordFailedAttempt('user@example.com'),
+    ])
+
+    expect(results).toEqual([false, false, true, true])
+    expect(mockRedis.incr).toHaveBeenCalledTimes(4)
+  })
+
   // ── resetFailedAttempts ───────────────────────────────────────────────────
 
   it('deletes the attempts counter key', async () => {
@@ -101,6 +141,26 @@ describe('account-lockout', () => {
     )
   })
 
+  it('clears the lock before the TTL expires', async () => {
+    // Account is currently locked with time remaining on the TTL.
+    mockRedis.exists.mockResolvedValueOnce(1)
+    mockRedis.ttl.mockResolvedValue(300)
+    expect(await isAccountLocked('user@example.com')).toBe(true)
+    expect(await lockoutRemainingSeconds('user@example.com')).toBe(300)
+
+    // Manual unlock removes the keys before the TTL elapses.
+    mockRedis.del.mockResolvedValue(2)
+    await unlockAccount('user@example.com')
+    expect(mockRedis.del).toHaveBeenCalledWith(
+      'lockout:user@example.com',
+      'login_attempts:user@example.com'
+    )
+
+    // Subsequent lock check reports unlocked.
+    mockRedis.exists.mockResolvedValueOnce(0)
+    expect(await isAccountLocked('user@example.com')).toBe(false)
+  })
+
   // ── lockoutRemainingSeconds ───────────────────────────────────────────────
 
   it('returns the positive TTL from Redis', async () => {
@@ -111,5 +171,17 @@ describe('account-lockout', () => {
   it('returns 0 when key does not exist (TTL = -2)', async () => {
     mockRedis.ttl.mockResolvedValue(-2)
     expect(await lockoutRemainingSeconds('user@example.com')).toBe(0)
+  })
+
+  // ── fail-open behavior ────────────────────────────────────────────────────
+
+  it('does not block login when Redis is unavailable (recordFailedAttempt)', async () => {
+    mockRedis.incr.mockRejectedValue(new Error('Redis connection refused'))
+    await expect(recordFailedAttempt('user@example.com')).resolves.toBe(false)
+  })
+
+  it('does not block login when Redis is unavailable (isAccountLocked)', async () => {
+    mockRedis.exists.mockRejectedValue(new Error('Redis connection refused'))
+    await expect(isAccountLocked('user@example.com')).resolves.toBe(false)
   })
 })

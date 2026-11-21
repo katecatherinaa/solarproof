@@ -3,8 +3,19 @@ import { NextResponse } from 'next/server'
 /**
  * GET /api/docs/ui
  * Serves an interactive Swagger UI backed by /api/docs (openapi.yaml).
+ *
+ * The playground is enabled in staging and non-production environments.
+ * In production it is hidden (404) unless ALLOW_API_PLAYGROUND is set.
  */
 export async function GET() {
+  const isProduction =
+    process.env.VERCEL_ENV === 'production' || process.env.NODE_ENV === 'production'
+  const allowPlayground = process.env.ALLOW_API_PLAYGROUND === 'true'
+
+  if (isProduction && !allowPlayground) {
+    return new NextResponse('Not Found', { status: 404 })
+  }
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -22,6 +33,8 @@ export async function GET() {
       dom_id: '#swagger-ui',
       presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
       layout: 'BaseLayout',
+      tryItOutEnabled: true,
+      supportedSubmitMethods: ['get', 'post', 'put', 'patch', 'delete'],
     })
   </script>
 </body>

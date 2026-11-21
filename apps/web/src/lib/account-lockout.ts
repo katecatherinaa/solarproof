@@ -31,11 +31,19 @@ function lockoutKey(email: string): string {
 
 /**
  * Returns true when the account identified by `email` is currently locked out.
+ *
+ * Fails open: if Redis is unavailable, returns `false` so that login is not
+ * blocked by an infrastructure outage.
  */
 export async function isAccountLocked(email: string): Promise<boolean> {
-  const redis = getRedisConnection()
-  const locked = await redis.exists(lockoutKey(email))
-  return locked === 1
+  try {
+    const redis = getRedisConnection()
+    const locked = await redis.exists(lockoutKey(email))
+    return locked === 1
+  } catch (error) {
+    console.error('[account-lockout] isAccountLocked failed, failing open:', error)
+    return false
+  }
 }
 
 /**
@@ -46,27 +54,35 @@ export async function isAccountLocked(email: string): Promise<boolean> {
  *   `true` to signal that the caller should trigger the lockout notification.
  *
  * @returns `true` if the account was just locked (threshold crossed this call).
+ *
+ * Fails open: if Redis is unavailable, returns `false` (and logs the error)
+ * so that login is not blocked by an infrastructure outage.
  */
 export async function recordFailedAttempt(email: string): Promise<boolean> {
-  const redis = getRedisConnection()
-  const key = attemptsKey(email)
+  try {
+    const redis = getRedisConnection()
+    const key = attemptsKey(email)
 
-  // Increment the counter atomically.
-  const count = await redis.incr(key)
+    // Increment the counter atomically.
+    const count = await redis.incr(key)
 
-  // Set the TTL on the first increment so the window is anchored to the
-  // first failure rather than reset on every failure.
-  if (count === 1) {
-    await redis.expire(key, WINDOW_SECONDS)
+    // Set the TTL on the first increment so the window is anchored to the
+    // first failure rather than reset on every failure.
+    if (count === 1) {
+      await redis.expire(key, WINDOW_SECONDS)
+    }
+
+    if (count >= MAX_ATTEMPTS) {
+      // Lock the account and let the caller send the notification email.
+      await redis.set(lockoutKey(email), '1', 'EX', LOCKOUT_SECONDS)
+      return true
+    }
+
+    return false
+  } catch (error) {
+    console.error('[account-lockout] recordFailedAttempt failed, failing open:', error)
+    return false
   }
-
-  if (count >= MAX_ATTEMPTS) {
-    // Lock the account and let the caller send the notification email.
-    await redis.set(lockoutKey(email), '1', 'EX', LOCKOUT_SECONDS)
-    return true
-  }
-
-  return false
 }
 
 /**

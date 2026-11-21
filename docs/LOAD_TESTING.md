@@ -139,6 +139,60 @@ allowed_requests................: 30
 - **429s on the very first request** → a previous test run may still hold the
   window; wait one minute and re-run.
 
+## Concurrent certificate retirement — `/api/certificates/:id/retire`
+
+Covers Issue #748: race-condition coverage for concurrent retirement of the same
+certificate. The readings scenarios only exercise submission, so this scenario
+specifically probes what happens when many clients try to retire one certificate
+at the same instant.
+
+### What it checks
+
+- **50 VUs** attempt to retire the **same certificate** simultaneously.
+- **Exactly one** request succeeds with a non-idempotent success (the winner).
+- All other requests return **409 Conflict** (already retired) or an idempotent
+  **200** — never a 5xx.
+- **No 500 errors** occur during the scenario.
+
+### Running locally
+
+```bash
+export BASE_URL=http://localhost:3000
+k6 run --env BASE_URL=$BASE_URL scripts/load-test-certificate-retire.mjs
+```
+
+The script seeds a fresh certificate, then synchronises all 50 VUs on a shared
+start barrier so the retirement requests land as close together as possible.
+
+### Interpreting results
+
+```
+✓ exactly one successful retirement
+✓ all other responses are 409 or idempotent 200
+✓ no 5xx responses
+
+retire_success_count............: 1
+retire_conflict_count...........: 49
+http_req_failed.................: 0.00%
+```
+
+- **More than one success** → the retirement path is not atomic; a race condition
+  allows double-retirement. Investigate the DB transaction / unique constraint.
+- **Any 5xx response** → the race surfaces as an unhandled error (e.g. unique
+  constraint violation not mapped to 409); fix the error handling.
+- **All requests 409** → the certificate was already retired before the scenario
+  ran; ensure the script seeds a fresh certificate.
+
+### Running in CI
+
+The `load-test` job in `.github/workflows/load-test.yml` runs this scenario
+against the staging environment:
+
+```yaml
+- name: Concurrent certificate retirement test
+  run: k6 run --env BASE_URL=${{ vars.STAGING_URL }} scripts/load-test-certificate-retire.mjs
+```
+
 ## CI integration
 
 Add to `.github/workflows/ci.yml` when a staging environment is available:

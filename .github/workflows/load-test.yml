@@ -117,6 +117,101 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+  certificate-retirement:
+    name: k6 concurrent certificate retirement
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring \
+            --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+
+      - name: Run concurrent retirement test
+        id: run_retirement_test
+        run: |
+          # 50 VUs attempt to retire the same certificate simultaneously
+          k6 run tests/load/certificate-retirement.js \
+            -e API_URL=${{ github.event.inputs.api_url || 'https://solarproof-staging.vercel.app' }} \
+            --summary-export=certificate-retirement-summary.json || true
+
+      - name: Enforce retirement thresholds
+        id: enforce_retirement
+        run: |
+          RESULT=$(python3 -c "
+          import json, sys
+          try:
+              with open('certificate-retirement-summary.json') as f:
+                  data = json.load(f)
+              metrics = data.get('metrics', {})
+              successes = metrics.get('retirement_success_count', {}).get('count')
+              server_errors = metrics.get('retirement_server_error_count', {}).get('count')
+              if successes is None or server_errors is None:
+                  print('N/A')
+                  sys.exit(0)
+              print(f'{int(successes)} {int(server_errors)}')
+          except Exception as e:
+              print(f'ERROR: {e}', file=sys.stderr)
+              print('N/A')
+          " 2>&1)
+
+          if [ "$RESULT" = "N/A" ] || [ -z "$RESULT" ]; then
+            echo "::error::Could not parse retirement results from k6 summary — cannot confirm concurrency safety"
+            exit 1
+          fi
+
+          SUCCESSES=$(echo "$RESULT" | awk '{print $1}')
+          SERVER_ERRORS=$(echo "$RESULT" | awk '{print $2}')
+
+          echo "successes=${SUCCESSES}" >> "$GITHUB_OUTPUT"
+          echo "server_errors=${SERVER_ERRORS}" >> "$GITHUB_OUTPUT"
+
+          if [ "$SERVER_ERRORS" -ne 0 ]; then
+            echo "::error::Observed ${SERVER_ERRORS} 5xx responses during concurrent retirement — race condition suspected"
+            exit 1
+          fi
+
+          if [ "$SUCCESSES" -ne 1 ]; then
+            echo "::error::Expected exactly 1 successful retirement, observed ${SUCCESSES}"
+            exit 1
+          fi
+
+          echo "✅ Concurrent retirement safe: exactly 1 success, 0 server errors"
+
+      - name: Add Certificate Retirement Summary
+        if: always()
+        run: |
+          SUCCESSES="${{ steps.enforce_retirement.outputs.successes }}"
+          SERVER_ERRORS="${{ steps.enforce_retirement.outputs.server_errors }}"
+          cat >> "$GITHUB_STEP_SUMMARY" << EOF
+          ## Concurrent Certificate Retirement Test
+
+          | Metric | Value |
+          |---|---|
+          | Target | ${{ github.event.inputs.api_url || 'https://solarproof-staging.vercel.app' }} |
+          | Concurrent VUs | 50 |
+          | Successful retirements (expected 1) | ${SUCCESSES:-N/A} |
+          | Server errors (expected 0) | ${SERVER_ERRORS:-N/A} |
+
+          > Concurrent retirement of the same certificate must yield exactly one success; all other requests must return 409 (or 200 idempotent). No 5xx responses are permitted.
+          EOF
+
+      - name: Upload certificate retirement results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certificate-retirement-results-${{ github.run_id }}
+          path: certificate-retirement-summary.json
+          if-no-files-found: ignore
+          retention-days: 30
+
   load-test:
     name: k6 load test (${{ github.event.inputs.scenario || 'baseline' }})
     runs-on: ubuntu-latest
