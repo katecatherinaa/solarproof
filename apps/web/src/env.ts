@@ -55,6 +55,10 @@ export const env = createEnv({
   server: {
     SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
     ADMIN_SECRET: z.string().min(16).optional(),
+    // Comma-separated list of allowed CIDRs for admin API endpoints.
+    // Example: 203.0.113.0/24,198.51.100.7/32
+    // Empty or unset = no IP restriction.
+    ADMIN_IP_ALLOWLIST: z.string().optional(),
     // Comma-separated list of allowed CORS origins.
     // Example: https://solarproof.vercel.app,https://staging.solarproof.vercel.app
     // Defaults to the explicit production allowlist; wildcards are rejected in production.
@@ -94,6 +98,7 @@ export const env = createEnv({
   runtimeEnv: {
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     ADMIN_SECRET: process.env.ADMIN_SECRET,
+    ADMIN_IP_ALLOWLIST: process.env.ADMIN_IP_ALLOWLIST,
     CORS_ALLOWED_ORIGINS: process.env.CORS_ALLOWED_ORIGINS,
     MINTER_SECRET_ARN: process.env.MINTER_SECRET_ARN,
     MINTER_PREVIOUS_SECRET_ARN: process.env.MINTER_PREVIOUS_SECRET_ARN,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createClient } from '@supabase/supabase-js'
+import { randomUUID } from 'crypto'
 import { env } from '@/env'
 import {
   isAccountLocked,
@@ -9,6 +10,7 @@ import {
   lockoutRemainingSeconds,
 } from '@/lib/account-lockout'
 import { sendLockoutEmail } from '@/lib/email'
+import { hashRefreshToken, storeRefreshToken } from '@/lib/refresh-token-store'
 
 const LoginSchema = z.object({
   email: z.string().trim().email(),
@@ -76,6 +78,22 @@ export async function POST(req: NextRequest) {
 
   // Successful login — reset failure counter
   await resetFailedAttempts(email)
+
+  // ── Start a new refresh-token session family (issue #770) ─────────────────
+  // Every login begins a fresh family; the issued refresh token is the root
+  // (parent_token_id = null) of that family.
+  const sessionFamilyId = randomUUID()
+  try {
+    await storeRefreshToken({
+      tokenHash: hashRefreshToken(data.session.refresh_token),
+      sessionFamilyId,
+      parentTokenId: null,
+      userId: data.user?.id ?? null,
+    })
+  } catch (err) {
+    console.error('[refresh-token] failed to persist session family', err)
+    return NextResponse.json({ error: 'Authentication failed' }, { status: 500 })
+  }
 
   // ── Set HttpOnly cookies (issue #113) ─────────────────────────────────────
   const isProduction = process.env.NODE_ENV === 'production'

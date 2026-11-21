@@ -24,7 +24,14 @@ vi.mock('@/lib/audit', () => ({
 }))
 
 import { createClient } from '@supabase/supabase-js'
-import { requireAuth, isAuthError, revokeToken } from '@/lib/auth'
+import {
+  requireAuth,
+  isAuthError,
+  revokeToken,
+  hashRefreshToken,
+  rotateRefreshToken,
+  revokeSessionFamily,
+} from '@/lib/auth'
 import { getCachedRevocation, setCachedRevocation } from '@/lib/cache'
 import { auditLog } from '@/lib/audit'
 
@@ -38,6 +45,13 @@ const mockRevokedMaybeSingle = vi.fn()
 const mockRevokedInsert = vi.fn()
 const mockFrom = vi.fn()
 
+const mockRefreshMaybeSingle = vi.fn()
+const mockRefreshInsert = vi.fn()
+const mockRefreshUpdateEq = vi.fn()
+const mockRefreshUpdate = vi.fn()
+const mockRefreshSelectEq = vi.fn()
+const mockRefreshSelect = vi.fn()
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetCachedRevocation.mockResolvedValue(null)
@@ -45,6 +59,12 @@ beforeEach(() => {
   mockAuditLog.mockResolvedValue(undefined)
   mockRevokedMaybeSingle.mockResolvedValue({ data: null, error: null })
   mockRevokedInsert.mockResolvedValue({ error: null })
+  mockRefreshMaybeSingle.mockResolvedValue({ data: null, error: null })
+  mockRefreshInsert.mockResolvedValue({ error: null })
+  mockRefreshUpdateEq.mockResolvedValue({ error: null })
+  mockRefreshUpdate.mockReturnValue({ eq: mockRefreshUpdateEq })
+  mockRefreshSelectEq.mockReturnValue({ maybeSingle: mockRefreshMaybeSingle })
+  mockRefreshSelect.mockReturnValue({ eq: mockRefreshSelectEq })
   mockFrom.mockImplementation((table: string) => {
     if (table === 'revoked_tokens') {
       return {
@@ -52,6 +72,13 @@ beforeEach(() => {
           eq: () => ({ maybeSingle: mockRevokedMaybeSingle }),
         }),
         insert: mockRevokedInsert,
+      }
+    }
+    if (table === 'refresh_tokens') {
+      return {
+        select: mockRefreshSelect,
+        insert: mockRefreshInsert,
+        update: mockRefreshUpdate,
       }
     }
     return {}
@@ -155,5 +182,110 @@ describe('revokeToken', () => {
       expect.objectContaining({ jti: 'jti-1' })
     )
     expect(mockSetCachedRevocation).toHaveBeenCalledWith('jti-1', true)
+  })
+})
+
+describe('hashRefreshToken', () => {
+  it('is deterministic for the same input', () => {
+    const a = hashRefreshToken('refresh-token-value')
+    const b = hashRefreshToken('refresh-token-value')
+    expect(a).toBe(b)
+  })
+
+  it('produces different hashes for different inputs', () => {
+    expect(hashRefreshToken('token-a')).not.toBe(hashRefreshToken('token-b'))
+  })
+
+  it('does not return the raw token', () => {
+    const raw = 'refresh-token-value'
+    expect(hashRefreshToken(raw)).not.toBe(raw)
+  })
+})
+
+describe('rotateRefreshToken', () => {
+  it('inserts a child token in the same session family and marks the parent used', async () => {
+    mockRefreshMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'rt-parent',
+        user_id: 'user-1',
+        session_family_id: 'family-1',
+        used_at: null,
+        revoked_at: null,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+      error: null,
+    })
+
+    const result = await rotateRefreshToken('parent-token', 'new-token')
+
+    expect(result).not.toBeNull()
+    expect(result?.sessionFamilyId).toBe('family-1')
+    expect(result?.userId).toBe('user-1')
+
+    // Parent marked used
+    expect(mockFrom).toHaveBeenCalledWith('refresh_tokens')
+    expect(mockRefreshUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ used_at: expect.any(String) })
+    )
+    expect(mockRefreshUpdateEq).toHaveBeenCalledWith('id', 'rt-parent')
+
+    // Child inserted with same family
+    expect(mockRefreshInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'user-1',
+        session_family_id: 'family-1',
+        token_hash: hashRefreshToken('new-token'),
+      })
+    )
+  })
+
+  it('detects reuse of an already-used token and revokes the whole family', async () => {
+    mockRefreshMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'rt-parent',
+        user_id: 'user-1',
+        session_family_id: 'family-1',
+        used_at: new Date().toISOString(),
+        revoked_at: null,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      },
+      error: null,
+    })
+
+    const result = await rotateRefreshToken('parent-token', 'new-token')
+
+    expect(result).toBeNull()
+    // Whole family revoked
+    expect(mockRefreshUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ revoked_at: expect.any(String) })
+    )
+    expect(mockRefreshUpdateEq).toHaveBeenCalledWith('session_family_id', 'family-1')
+    // No new child issued
+    expect(mockRefreshInsert).not.toHaveBeenCalled()
+    // Reuse logged
+    expect(mockAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: expect.stringMatching(/reuse/i) })
+    )
+  })
+
+  it('returns null when the refresh token is unknown', async () => {
+    mockRefreshMaybeSingle.mockResolvedValue({ data: null, error: null })
+
+    const result = await rotateRefreshToken('unknown-token', 'new-token')
+
+    expect(result).toBeNull()
+    expect(mockRefreshInsert).not.toHaveBeenCalled()
+  })
+})
+
+describe('revokeSessionFamily', () => {
+  it('marks every row in the family revoked', async () => {
+    await revokeSessionFamily('family-1')
+
+    expect(mockFrom).toHaveBeenCalledWith('refresh_tokens')
+    expect(mockRefreshUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ revoked_at: expect.any(String) })
+    )
+    expect(mockRefreshUpdateEq).toHaveBeenCalledWith('session_family_id', 'family-1')
   })
 })

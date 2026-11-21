@@ -68,6 +68,9 @@ jobs:
           I18N_LOCALES: en,es,pt-BR
       - run: pnpm test
         working-directory: apps/web
+      - name: Audit log chain integrity test
+        run: pnpm vitest run tests/audit-log-chain.test.ts --reporter=verbose
+        working-directory: apps/web
       - name: Run tests with coverage
         run: pnpm vitest run --coverage
         working-directory: apps/web

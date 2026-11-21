@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth, isAuthError, createUserClient, revokeToken } from '@/lib/auth'
+import { revokeSessionFamily } from '@/lib/auth/refresh-tokens'
 
 const ACCESS_TOKEN_COOKIE = 'sp_access_token'
 const REFRESH_TOKEN_COOKIE = 'sp_refresh_token'
@@ -7,10 +8,11 @@ const REFRESH_TOKEN_COOKIE = 'sp_refresh_token'
 /**
  * POST /api/auth/logout
  *
- * Invalidates the current session, revokes the access token JTI, and clears
- * the HttpOnly auth cookies set by /api/auth/login.
+ * Invalidates the current session, revokes the access token JTI, revokes the
+ * entire refresh-token session family, and clears the HttpOnly auth cookies
+ * set by /api/auth/login.
  *
- * Closes #113.
+ * Closes #113, #770.
  */
 export async function POST(req: NextRequest) {
   const auth = await requireAuth(req)
@@ -18,6 +20,12 @@ export async function POST(req: NextRequest) {
 
   // Add token JTI to revocation list before signing out
   await revokeToken(auth.accessToken)
+
+  // Revoke the entire refresh-token session family so the logged-out session
+  // cannot be refreshed (and any rotated descendants are also invalidated).
+  if (auth.sessionId) {
+    await revokeSessionFamily(auth.sessionId)
+  }
 
   const client = createUserClient(auth.accessToken)
   const { error } = await client.auth.signOut()

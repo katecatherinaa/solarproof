@@ -173,3 +173,173 @@ export async function requireAuth(
 export function isAuthError(result: unknown): result is NextResponse {
   return result instanceof NextResponse
 }
+
+// ---------------------------------------------------------------------------
+// Refresh-token session management (issue #770)
+//
+// Refresh tokens are stored hashed in the `refresh_tokens` table. Each token
+// belongs to a "family" (one per login session). Every refresh call rotates the
+// token: the presented token is marked used and a child token is inserted into
+// the same family. Presenting an already-used token is treated as theft and
+// invalidates the entire family.
+// ---------------------------------------------------------------------------
+
+import { createHash, randomBytes } from 'node:crypto'
+
+/** Hash a raw refresh token for at-rest storage/lookup (SHA-256, hex). */
+export function hashRefreshToken(rawToken: string): string {
+  return createHash('sha256').update(rawToken).digest('hex')
+}
+
+/** Generate a cryptographically random raw refresh token. */
+export function generateRefreshToken(): string {
+  return randomBytes(32).toString('base64url')
+}
+
+export interface RefreshTokenRecord {
+  id: string
+  family_id: string
+  user_id: string
+  token_hash: string
+  parent_id: string | null
+  used_at: string | null
+  revoked_at: string | null
+  expires_at: string
+  created_at: string
+}
+
+/**
+ * Create a brand-new refresh-token family (one per login session).
+ * Returns the raw token (to hand to the client) and the stored record.
+ */
+export async function createRefreshTokenRecord(params: {
+  userId: string
+  ttlSeconds?: number
+}): Promise<{ rawToken: string; record: RefreshTokenRecord }> {
+  const db = createServiceClient()
+  const rawToken = generateRefreshToken()
+  const tokenHash = hashRefreshToken(rawToken)
+  const familyId = randomBytes(16).toString('hex')
+  const ttl = params.ttlSeconds ?? 30 * 24 * 60 * 60
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString()
+
+  const { data, error } = await db
+    .from('refresh_tokens')
+    .insert({
+      family_id: familyId,
+      user_id: params.userId,
+      token_hash: tokenHash,
+      parent_id: null,
+      expires_at: expiresAt,
+    })
+    .select()
+    .single()
+
+  if (error || !data) {
+    throw new Error(`Failed to create refresh token: ${error?.message ?? 'unknown error'}`)
+  }
+
+  return { rawToken, record: data as RefreshTokenRecord }
+}
+
+export type RotateRefreshTokenResult =
+  | { status: 'rotated'; rawToken: string; record: RefreshTokenRecord; userId: string }
+  | { status: 'reuse'; userId: string; familyId: string }
+  | { status: 'invalid' }
+  | { status: 'expired'; userId: string; familyId: string }
+
+/**
+ * Rotate a refresh token.
+ *
+ * - Looks up the presented token by hash.
+ * - If it has already been used or revoked, this is a reuse/theft signal:
+ *   the whole family is revoked and `status: 'reuse'` is returned.
+ * - Otherwise the token is marked used and a child token is inserted into the
+ *   same family, atomically-ish (mark-then-insert; a failed insert revokes the
+ *   family to fail closed).
+ */
+export async function rotateRefreshToken(params: {
+  rawToken: string
+  ttlSeconds?: number
+}): Promise<RotateRefreshTokenResult> {
+  const db = createServiceClient()
+  const tokenHash = hashRefreshToken(params.rawToken)
+
+  const { data: existing, error: lookupError } = await db
+    .from('refresh_tokens')
+    .select('*')
+    .eq('token_hash', tokenHash)
+    .maybeSingle()
+
+  if (lookupError || !existing) return { status: 'invalid' }
+
+  const current = existing as RefreshTokenRecord
+
+  // Reuse detection: a token that was already used or revoked means the
+  // credential has been replayed. Nuke the entire family.
+  if (current.used_at || current.revoked_at) {
+    await revokeSessionFamily(current.family_id)
+    return { status: 'reuse', userId: current.user_id, familyId: current.family_id }
+  }
+
+  if (new Date(current.expires_at).getTime() <= Date.now()) {
+    await revokeSessionFamily(current.family_id)
+    return { status: 'expired', userId: current.user_id, familyId: current.family_id }
+  }
+
+  // Mark the presented token as used. Guard on `used_at IS NULL` so a
+  // concurrent replay cannot both succeed.
+  const { data: marked, error: markError } = await db
+    .from('refresh_tokens')
+    .update({ used_at: new Date().toISOString() })
+    .eq('id', current.id)
+    .is('used_at', null)
+    .select('id')
+    .maybeSingle()
+
+  if (markError || !marked) {
+    // Lost the race (or DB error) — treat as reuse and fail closed.
+    await revokeSessionFamily(current.family_id)
+    return { status: 'reuse', userId: current.user_id, familyId: current.family_id }
+  }
+
+  const rawToken = generateRefreshToken()
+  const ttl = params.ttlSeconds ?? 30 * 24 * 60 * 60
+  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString()
+
+  const { data: child, error: insertError } = await db
+    .from('refresh_tokens')
+    .insert({
+      family_id: current.family_id,
+      user_id: current.user_id,
+      token_hash: hashRefreshToken(rawToken),
+      parent_id: current.id,
+      expires_at: expiresAt,
+    })
+    .select()
+    .single()
+
+  if (insertError || !child) {
+    await revokeSessionFamily(current.family_id)
+    return { status: 'reuse', userId: current.user_id, familyId: current.family_id }
+  }
+
+  return {
+    status: 'rotated',
+    rawToken,
+    record: child as RefreshTokenRecord,
+    userId: current.user_id,
+  }
+}
+
+/**
+ * Revoke every token in a session family. Used on reuse detection and logout.
+ */
+export async function revokeSessionFamily(familyId: string): Promise<void> {
+  const db = createServiceClient()
+  await db
+    .from('refresh_tokens')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('family_id', familyId)
+    .is('revoked_at', null)
+}

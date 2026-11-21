@@ -23,7 +23,8 @@ const securityHeaders = [
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   // Limit referrer information leaked to other origins.
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  // Restrict powerful browser features to same-origin only.
+  // Restrict powerful browser features: deny camera, microphone, geolocation,
+  // payment and USB access to the app and any embedding iframes.
   {
     key: 'Permissions-Policy',
     value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
