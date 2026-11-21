@@ -174,6 +174,7 @@ and [IREC / Energy Web Interop](./IREC_ENERGYWEB_INTEROP.md) for details.
 - **Meter → API**: Ed25519 signature verification; invalid signatures rejected with 401
 - **API → Supabase**: Service role key used server-side only; never exposed to client
 - **API → Stellar**: Minter secret key stored as server-side env var (`MINTER_SECRET_KEY`)
+- **API → Bridge**: Zero-trust internal authentication — every outbound Next.js call to the bridge must include the `X-Internal-Secret` header; the bridge rejects requests without a valid secret even on internal routes, so network isolation is no longer the sole control. The secret is sourced from Secrets Manager (via env) and rotated through the same secrets rotation process as other credentials.
 - **Bridge → Energy Web Chain**: Bridge signer key stored as server-side env var only; never exposed to client or logs
 - **Client → Supabase**: Anon key with row-level security policies per cooperative
 - **Public Verifier**: Read-only, no authentication required

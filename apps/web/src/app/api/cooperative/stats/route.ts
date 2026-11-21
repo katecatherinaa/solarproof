@@ -6,8 +6,15 @@ import { requireAuth, isAuthError } from '@/lib/auth'
 const StatsQuerySchema = z.object({
   date_from: z.string().datetime().optional(),
   date_to: z.string().datetime().optional(),
-  granularity: z.enum(['day', 'month', 'year']).default('day'),
+  granularity: z.enum(['day', 'week', 'month']).default('day'),
 })
+
+interface MeterSeriesRow {
+  bucket: string
+  meter_id: string
+  meter_name: string
+  kwh: number | string
+}
 
 /**
  * GET /api/cooperative/stats
@@ -39,7 +46,7 @@ export async function GET(req: NextRequest) {
   const end = date_to ?? defaultTo
 
   // Execute analytics RPCs in parallel
-  const [summaryResult, trendsResult, meterResult] = await Promise.all([
+  const [summaryResult, trendsResult, meterResult, meterSeriesResult] = await Promise.all([
     // Aggregate summary for the selected range
     db.rpc('get_cooperative_trends', {
       target_cooperative_id: auth.cooperativeId,
@@ -60,11 +67,27 @@ export async function GET(req: NextRequest) {
       start_date: start,
       end_date: end,
     }),
+    // Per-meter kWh time series for the stacked bar chart
+    db.rpc('get_cooperative_meter_kwh_series', {
+      target_cooperative_id: auth.cooperativeId,
+      start_date: start,
+      end_date: end,
+      granularity: granularity,
+    }),
   ])
 
   if (summaryResult.error) return NextResponse.json({ error: summaryResult.error.message }, { status: 500 })
   if (trendsResult.error) return NextResponse.json({ error: trendsResult.error.message }, { status: 500 })
   if (meterResult.error) return NextResponse.json({ error: meterResult.error.message }, { status: 500 })
+  if (meterSeriesResult.error) return NextResponse.json({ error: meterSeriesResult.error.message }, { status: 500 })
+
+  // Normalize the per-meter series into a stable shape for the dashboard chart
+  const meter_series = ((meterSeriesResult.data ?? []) as MeterSeriesRow[]).map((row) => ({
+    bucket: row.bucket,
+    meter_id: row.meter_id,
+    meter_name: row.meter_name,
+    kwh: Math.round(Number(row.kwh) * 1000) / 1000,
+  }))
 
   // Calculate summary totals from the trends results
   const summary = (summaryResult.data as { kwh: number; certs_issued: number; certs_retired: number }[]).reduce(
@@ -91,6 +114,7 @@ export async function GET(req: NextRequest) {
     },
     trends: trendsResult.data,
     meter_stats: meterResult.data,
+    meter_series,
     range: { start, end, granularity },
   })
 }

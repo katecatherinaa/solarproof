@@ -122,6 +122,93 @@ describe('VerifyPage snapshots', () => {
   })
 })
 
+describe('VerifyPage tx hash lookup', () => {
+  const TX_HASH = 'a'.repeat(64)
+
+  it('auto-resolves a certificate from ?tx=<64-hex> on mount', async () => {
+    mockSearchParams.set('tx', TX_HASH)
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockChainOfCustody,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<VerifyPage />)
+
+    await waitFor(() => screen.getByRole('status'))
+    expect(fetchMock).toHaveBeenCalled()
+    const calledUrl = String(fetchMock.mock.calls[0][0])
+    expect(calledUrl).toContain(TX_HASH)
+    expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe(TX_HASH)
+  })
+
+  it('shows a not-found message for an unknown tx hash', async () => {
+    mockSearchParams.set('tx', TX_HASH)
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: 'Not found' }),
+    }))
+
+    render(<VerifyPage />)
+
+    const alert = await waitFor(() => screen.getByRole('alert'))
+    expect(alert.textContent).toMatch(/not found/i)
+  })
+
+  it('accepts a UUID in the search input', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockChainOfCustody,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<VerifyPage />)
+    const input = screen.getByRole('searchbox')
+    const button = screen.getByRole('button', { name: /verify certificate/i })
+
+    fireEvent.change(input, { target: { value: 'cert-abc-123' } })
+    await act(async () => { fireEvent.click(button) })
+
+    await waitFor(() => screen.getByRole('status'))
+    expect(fetchMock).toHaveBeenCalled()
+  })
+
+  it('accepts a 64-char hex tx hash in the search input', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => mockChainOfCustody,
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<VerifyPage />)
+    const input = screen.getByRole('searchbox')
+    const button = screen.getByRole('button', { name: /verify certificate/i })
+
+    fireEvent.change(input, { target: { value: TX_HASH } })
+    await act(async () => { fireEvent.click(button) })
+
+    await waitFor(() => screen.getByRole('status'))
+    expect(fetchMock).toHaveBeenCalled()
+    const calledUrl = String(fetchMock.mock.calls[0][0])
+    expect(calledUrl).toContain(TX_HASH)
+  })
+
+  it('rejects malformed input without issuing a request', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<VerifyPage />)
+    const input = screen.getByRole('searchbox')
+    const button = screen.getByRole('button', { name: /verify certificate/i })
+
+    fireEvent.change(input, { target: { value: 'not-a-valid-id' } })
+    await act(async () => { fireEvent.click(button) })
+
+    await waitFor(() => screen.getByRole('alert'))
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
 describe('VerifyPage kiosk mode', () => {
   beforeEach(() => {
     mockSearchParams.set('kiosk', '1')

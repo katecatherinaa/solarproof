@@ -30,9 +30,24 @@ You will see a search bar at the top of the page.
 
 ### Step 2 — Enter the certificate identifier
 
-Paste your certificate ID, reading hash, or transaction hash into the search bar.
+Paste your certificate ID, reading hash, or transaction hash into the search bar. The search box accepts any of these three identifiers:
+
+- a certificate ID (UUID, 36 characters)
+- a reading hash (64-character hex string)
+- a Stellar transaction hash (64-character hex string) — either the anchor tx or the mint tx
 
 > **Tip:** The identifier is case-insensitive. Leading and trailing spaces are ignored.
+
+#### Deep link from Stellar Expert
+
+If you are viewing a transaction on a Stellar explorer, you can jump straight to the certificate by adding the transaction hash to the verifier URL:
+
+```
+https://solarproof.vercel.app/verify?tx=<64_hex_transaction_hash>
+```
+
+For example, `https://solarproof.vercel.app/verify?tx=8d1a2b…c3d4` (with the full 64-character hash) opens the verifier and automatically looks up the certificate whose anchor or mint transaction matches that hash. The same hash can also be pasted into the search bar manually.
+=======
 
 ---
 
@@ -114,6 +129,8 @@ Physical meter
 **Q: The verifier says "Certificate not found." What should I do?**
 
 Check that you copied the full identifier without truncating it. Certificate IDs are 36 characters; hashes are 64 hex characters. If the identifier looks correct, the certificate may not have been issued yet — contact the issuer.
+
+This also applies to transaction hashes: if you open `/verify?tx=<hash>` and no certificate matches the hash, the verifier shows a clear "Certificate not found" message rather than an error. Double-check that the hash is a SolarProof anchor or mint transaction (not an unrelated Stellar transaction) and that all 64 hex characters were copied.
 
 ---
 

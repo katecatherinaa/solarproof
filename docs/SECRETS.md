@@ -30,6 +30,9 @@ No secrets are committed to the repository. Three tiers:
 | `NEXT_PUBLIC_ENERGY_TOKEN_ID` | Deployed energy_token contract ID | All |
 | `NEXT_PUBLIC_AUDIT_REGISTRY_ID` | Deployed audit_registry contract ID | All |
 | `NEXT_PUBLIC_COMMUNITY_GOVERNANCE_ID` | Deployed community_governance contract ID | All |
+| `INTERNAL_BRIDGE_SECRET` | Shared secret for zero-trust auth between Next.js and the bridge service (sent as `X-Internal-Secret`) | All |
+| `INTERNAL_BRIDGE_SECRET_ARN` | AWS Secrets Manager ARN for the bridge secret | Production |
+| `INTERNAL_BRIDGE_PREVIOUS_SECRET_ARN` | ARN for previous bridge secret during rotation window | Production |
 
 ---
 
@@ -52,6 +55,7 @@ NEXT_PUBLIC_SUPABASE_URL
 NEXT_PUBLIC_SUPABASE_ANON_KEY
 SUPABASE_SERVICE_ROLE_KEY
 MINTER_SECRET_KEY
+INTERNAL_BRIDGE_SECRET
 TURBO_TOKEN
 TURBO_TEAM
 ```
@@ -66,6 +70,7 @@ STAGING_MINTER_SECRET_KEY
 STAGING_ENERGY_TOKEN_ID
 STAGING_AUDIT_REGISTRY_ID
 STAGING_COMMUNITY_GOVERNANCE_ID
+STAGING_INTERNAL_BRIDGE_SECRET
 VERCEL_TOKEN
 VERCEL_ORG_ID
 VERCEL_PROJECT_ID_STAGING
@@ -81,6 +86,8 @@ Set the following in the Vercel project's **Settings → Environment Variables**
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `MINTER_SECRET_ARN` (points to AWS Secrets Manager; `MINTER_SECRET_KEY` is not used in production)
 - `MINTER_PREVIOUS_SECRET_ARN` (set during the 24-hour key-rotation grace window)
+- `INTERNAL_BRIDGE_SECRET_ARN` (points to AWS Secrets Manager; `INTERNAL_BRIDGE_SECRET` is not used in production)
+- `INTERNAL_BRIDGE_PREVIOUS_SECRET_ARN` (set during the 24-hour bridge-secret rotation grace window)
 - `AWS_REGION`
 - `REDIS_URL`
 - `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`
@@ -88,6 +95,8 @@ Set the following in the Vercel project's **Settings → Environment Variables**
 - `CORS_ALLOWED_ORIGINS`
 
 Production never uses a plaintext `MINTER_SECRET_KEY`. The key is fetched at runtime from AWS Secrets Manager via `MINTER_SECRET_ARN` (see `src/lib/secrets.ts`).
+
+The bridge service requires the `X-Internal-Secret` header on every request, including internal routes. Next.js injects `INTERNAL_BRIDGE_SECRET` on all outbound bridge calls; the bridge validates it in constant time and rejects requests with a missing or mismatched secret. In production the secret is fetched at runtime from AWS Secrets Manager via `INTERNAL_BRIDGE_SECRET_ARN`.
 
 ---
 
@@ -98,6 +107,16 @@ Production never uses a plaintext `MINTER_SECRET_KEY`. The key is fetched at run
 3. Update `MINTER_SECRET_ARN` in Vercel to point to the new ARN.
 4. Set `MINTER_PREVIOUS_SECRET_ARN` to the old ARN for 24 hours (allows in-flight transactions to complete).
 5. After 24 hours, clear `MINTER_PREVIOUS_SECRET_ARN`.
+
+### Bridge internal secret rotation
+
+The `INTERNAL_BRIDGE_SECRET` follows the same rotation process:
+
+1. Generate a new random secret (e.g. `openssl rand -hex 32`).
+2. Store the new secret as a new secret version in AWS Secrets Manager.
+3. Update `INTERNAL_BRIDGE_SECRET_ARN` in Vercel to point to the new ARN.
+4. Set `INTERNAL_BRIDGE_PREVIOUS_SECRET_ARN` to the old ARN for 24 hours (the bridge accepts either the current or previous secret during this window so in-flight calls succeed).
+5. After 24 hours, clear `INTERNAL_BRIDGE_PREVIOUS_SECRET_ARN`.
 
 ---
 

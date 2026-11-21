@@ -36,17 +36,20 @@ export async function GET(req: NextRequest) {
     })
   }
 
-  // Try certificate ID first, then reading_hash, then mint_tx_hash
+  // Try certificate ID first, then reading_hash, then mint_tx_hash, then anchor_tx_hash
   // Use separate parameterised filters instead of raw .or() interpolation
   const db = createAnonClient()
   let cert = null
-  for (const column of ['id', 'reading_hash', 'mint_tx_hash'] as const) {
+  for (const column of ['id', 'reading_hash', 'mint_tx_hash', 'anchor_tx_hash'] as const) {
     const { data } = await db.from('certificates').select('*').eq(column, id).maybeSingle()
     if (data) { cert = data; break }
   }
 
   if (!cert) {
-    return NextResponse.json({ error: 'Certificate not found' }, { status: 404 })
+    return NextResponse.json(
+      { error: 'Certificate not found', message: `No certificate found for "${id}".` },
+      { status: 404 },
+    )
   }
 
   // Fetch the associated reading for full audit trail

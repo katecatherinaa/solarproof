@@ -255,6 +255,10 @@ export interface Database {
         Args: { target_cooperative_id: string; start_date: string; end_date: string }
         Returns: { meter_id: string; serial_number: string; name: string; total_kwh: number; reading_count: number }[]
       }
+      get_cooperative_meter_series: {
+        Args: { target_cooperative_id: string; start_date: string; end_date: string; granularity: string }
+        Returns: { period: string; meter_id: string; serial_number: string; name: string; kwh: number }[]
+      }
     }
     Enums: Record<string, never>
   }

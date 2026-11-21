@@ -2,6 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
+type Period = 'day' | 'week' | 'month';
 
 interface CooperativeStats {
   totalKwhGenerated: number;
@@ -11,14 +23,20 @@ interface CooperativeStats {
   memberCount: number;
 }
 
-interface KwhPoint {
-  period: string;
+interface MeterKwh {
+  meterId: string;
+  meterName: string;
   kwh: number;
 }
 
-interface DashboardResponse {
+interface MeterBucket {
+  period: string;
+  meters: MeterKwh[];
+}
+
+interface StatsResponse {
   stats: CooperativeStats;
-  timeSeries: KwhPoint[];
+  buckets: MeterBucket[];
 }
 
 const EMPTY_STATS: CooperativeStats = {
@@ -28,6 +46,25 @@ const EMPTY_STATS: CooperativeStats = {
   certificatesRetired: 0,
   memberCount: 0,
 };
+
+const PERIOD_OPTIONS: { value: Period; label: string }[] = [
+  { value: 'day', label: 'Day' },
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+];
+
+const CHART_COLORS = [
+  '#059669',
+  '#0ea5e9',
+  '#6366f1',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#14b8a6',
+  '#ec4899',
+  '#84cc16',
+  '#f97316',
+];
 
 function formatNumber(value: number): string {
   return new Intl.NumberFormat().format(value);
@@ -42,56 +79,37 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function KwhChart({ data }: { data: KwhPoint[] }) {
-  const max = useMemo(
-    () => data.reduce((acc, point) => Math.max(acc, point.kwh), 0),
-    [data],
-  );
+interface MeterSeries {
+  meterId: string;
+  meterName: string;
+  color: string;
+}
 
-  if (data.length === 0) {
-    return (
-      <p className="text-sm text-gray-500">No generation data available yet.</p>
-    );
-  }
-
-  return (
-    <div className="flex h-48 items-end gap-2 overflow-x-auto">
-      {data.map((point) => {
-        const heightPct = max > 0 ? (point.kwh / max) * 100 : 0;
-        return (
-          <div
-            key={point.period}
-            className="flex min-w-[2rem] flex-1 flex-col items-center justify-end"
-          >
-            <div
-              className="w-full rounded-t bg-emerald-500"
-              style={{ height: `${heightPct}%` }}
-              title={`${point.period}: ${formatNumber(point.kwh)} kWh`}
-            />
-            <span className="mt-1 whitespace-nowrap text-xs text-gray-500">
-              {point.period}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
+interface ChartRow {
+  period: string;
+  [meterId: string]: string | number;
 }
 
 export default function CooperativeDashboardPage() {
   const router = useRouter();
-  const [data, setData] = useState<DashboardResponse | null>(null);
+  const [period, setPeriod] = useState<Period>('day');
+  const [data, setData] = useState<StatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showTable, setShowTable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      setLoading(true);
+      setError(null);
+
       try {
-        const res = await fetch('/api/cooperative/dashboard', {
-          credentials: 'include',
-        });
+        const res = await fetch(
+          `/api/cooperative/stats?period=${encodeURIComponent(period)}`,
+          { credentials: 'include' },
+        );
 
         if (res.status === 401 || res.status === 403) {
           router.replace('/login');
@@ -102,7 +120,7 @@ export default function CooperativeDashboardPage() {
           throw new Error('Failed to load cooperative dashboard');
         }
 
-        const json = (await res.json()) as DashboardResponse;
+        const json = (await res.json()) as StatsResponse;
         if (!cancelled) {
           setData(json);
         }
@@ -124,10 +142,42 @@ export default function CooperativeDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, [router, period]);
 
   const stats = data?.stats ?? EMPTY_STATS;
-  const timeSeries = data?.timeSeries ?? [];
+  const buckets = data?.buckets ?? [];
+
+  const meters = useMemo<MeterSeries[]>(() => {
+    const seen = new Map<string, string>();
+    for (const bucket of buckets) {
+      for (const meter of bucket.meters) {
+        if (!seen.has(meter.meterId)) {
+          seen.set(meter.meterId, meter.meterName);
+        }
+      }
+    }
+    return Array.from(seen.entries()).map(([meterId, meterName], index) => ({
+      meterId,
+      meterName,
+      color: CHART_COLORS[index % CHART_COLORS.length],
+    }));
+  }, [buckets]);
+
+  const chartRows = useMemo<ChartRow[]>(() => {
+    return buckets.map((bucket) => {
+      const row: ChartRow = { period: bucket.period };
+      for (const meter of bucket.meters) {
+        row[meter.meterId] = meter.kwh;
+      }
+      return row;
+    });
+  }, [buckets]);
+
+  const hasData = buckets.length > 0 && meters.length > 0;
+
+  function handleBarClick(meterId: string) {
+    router.push(`/meters/${meterId}`);
+  }
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
@@ -170,10 +220,139 @@ export default function CooperativeDashboardPage() {
           </section>
 
           <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-4 text-lg font-semibold text-gray-900">
-              Aggregate kWh over time
-            </h2>
-            <KwhChart data={timeSeries} />
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">
+                kWh per meter
+              </h2>
+              <div
+                className="flex items-center gap-1"
+                role="group"
+                aria-label="Select period"
+              >
+                {PERIOD_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setPeriod(option.value)}
+                    aria-pressed={period === option.value}
+                    className={
+                      period === option.value
+                        ? 'rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white'
+                        : 'rounded-md border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50'
+                    }
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {!hasData ? (
+              <p className="text-sm text-gray-500">
+                No generation data available yet.
+              </p>
+            ) : (
+              <>
+                <div className="h-72 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartRows}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="period" />
+                      <YAxis
+                        tickFormatter={(value: number) => formatNumber(value)}
+                      />
+                      <Tooltip
+                        formatter={(value: number, name: string) => [
+                          `${formatNumber(value)} kWh`,
+                          name,
+                        ]}
+                      />
+                      <Legend />
+                      {meters.map((meter) => (
+                        <Bar
+                          key={meter.meterId}
+                          dataKey={meter.meterId}
+                          name={meter.meterName}
+                          stackId="kwh"
+                          fill={meter.color}
+                          cursor="pointer"
+                          onClick={() => handleBarClick(meter.meterId)}
+                        />
+                      ))}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() => setShowTable((prev) => !prev)}
+                    aria-expanded={showTable}
+                    aria-controls="kwh-data-table"
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    {showTable ? 'Hide data table' : 'Show data table'}
+                  </button>
+                </div>
+
+                {showTable && (
+                  <div
+                    id="kwh-data-table"
+                    className="mt-4 overflow-x-auto"
+                  >
+                    <table className="min-w-full divide-y divide-gray-200 text-sm">
+                      <caption className="mb-2 text-left text-sm text-gray-500">
+                        kWh generated per meter per {period}
+                      </caption>
+                      <thead>
+                        <tr>
+                          <th
+                            scope="col"
+                            className="px-3 py-2 text-left font-semibold text-gray-900"
+                          >
+                            Period
+                          </th>
+                          {meters.map((meter) => (
+                            <th
+                              key={meter.meterId}
+                              scope="col"
+                              className="px-3 py-2 text-right font-semibold text-gray-900"
+                            >
+                              {meter.meterName}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {chartRows.map((row) => (
+                          <tr key={row.period}>
+                            <th
+                              scope="row"
+                              className="px-3 py-2 text-left font-medium text-gray-700"
+                            >
+                              {row.period}
+                            </th>
+                            {meters.map((meter) => {
+                              const value = row[meter.meterId];
+                              return (
+                                <td
+                                  key={meter.meterId}
+                                  className="px-3 py-2 text-right text-gray-700"
+                                >
+                                  {typeof value === 'number'
+                                    ? formatNumber(value)
+                                    : '—'}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            )}
           </section>
         </div>
       )}

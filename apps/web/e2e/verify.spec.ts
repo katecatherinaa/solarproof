@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const validTxHash = 'a'.repeat(64)
+
 const validResponse = {
   certificate: {
     id: 'valid-certificate-id',
@@ -49,6 +51,25 @@ test.beforeEach(async ({ page }) => {
       return
     }
 
+    const queryTx = parsedUrl.searchParams.get('tx')
+    if (queryTx === validTxHash) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(validResponse),
+      })
+      return
+    }
+
+    if (queryTx) {
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Certificate not found' }),
+      })
+      return
+    }
+
     await route.continue()
   })
 })
@@ -67,6 +88,33 @@ test('submits a valid certificate ID and shows verified proof steps', async ({ p
 
 test('submits an invalid certificate ID and shows an error state', async ({ page }) => {
   await page.goto('/verify')
+  await Promise.all([
+    page.waitForResponse('**/api/verify**'),
+    page.click('button:has-text("Verify")'),
+  ])
+  await expect(page.locator('div[role="alert"]', { hasText: 'Certificate not found' })).toBeVisible()
+})
+
+test('resolves a certificate from a tx hash query param', async ({ page }) => {
+  await page.goto(`/verify?tx=${validTxHash}`)
+  await expect(page.locator('text=Certificate verified successfully.')).toBeVisible()
+  await expect(page.locator('text=On-chain proof')).toBeVisible()
+})
+
+test('search input accepts a 64-char hex tx hash', async ({ page }) => {
+  await page.goto('/verify')
+  await page.fill('input[name="certificateId"]', validTxHash)
+  await Promise.all([
+    page.waitForResponse('**/api/verify**'),
+    page.click('button:has-text("Verify")'),
+  ])
+  await expect(page.locator('text=Certificate verified successfully.')).toBeVisible()
+})
+
+test('shows a clear not-found message for an unknown tx hash', async ({ page }) => {
+  const unknownTxHash = 'b'.repeat(64)
+  await page.goto('/verify')
+  await page.fill('input[name="certificateId"]', unknownTxHash)
   await Promise.all([
     page.waitForResponse('**/api/verify**'),
     page.click('button:has-text("Verify")'),

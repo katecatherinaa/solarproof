@@ -102,7 +102,46 @@ Complete within 5 business days of resolution:
 
 ---
 
-## 8. Contacts
+## 8. Internal-Service Authentication Threats
+
+The zero-trust boundary between the Next.js API and the internal bridge service is enforced by a shared secret (`BRIDGE_SHARED_SECRET`) plus a request signature. The following threats are in scope for this playbook.
+
+### 8.1 Threat summary
+
+| Threat | Description | Severity |
+|--------|-------------|----------|
+| Shared-secret leakage | `BRIDGE_SHARED_SECRET` exposed via logs, CI output, or a compromised environment | P0 |
+| Replay attack | A captured, validly signed bridge request is re-submitted to trigger duplicate anchoring/minting | P1 |
+| Rotation gap | Secret rotated on one side only, or old secret left valid, allowing continued use of a leaked value | P1 |
+| Signature downgrade | Requests accepted without a signature or with a weak/absent timestamp check | P1 |
+
+### 8.2 Detection
+
+- Alert on bridge requests whose signature timestamp is outside the accepted skew window (default ±5 min).
+- Alert on duplicate `(request_id, nonce)` pairs or repeated idempotency keys within the replay window.
+- Alert on bridge 401/403 spikes, or on successful bridge calls originating from unexpected source IPs/regions.
+- Monitor for `BRIDGE_SHARED_SECRET` appearing in application logs, error traces, or GitHub Actions output (secret-scanning + log grep).
+- Alert when the bridge and API report different secret versions/fingerprints during the handshake.
+
+### 8.3 Immediate response
+
+1. **Rotate the shared secret** on both sides in a single coordinated change:
+   - Generate a new high-entropy value (≥32 bytes) and store it in Vercel and the bridge's secret store.
+   - Deploy the bridge first (accepting old + new during a short overlap), then the API, then retire the old secret.
+2. **Invalidate replay state**: flush the nonce/idempotency cache for the affected window so replayed requests cannot be silently accepted.
+3. **Block the source**: if a specific caller is implicated, deny it at the bridge ingress and review its recent requests.
+4. **Assess impact**: query `certificates` and `readings` for records created via bridge calls during the exposure window and mark suspect records `retired=true` with a note.
+
+### 8.4 Recovery and hardening
+
+- Confirm both services report the same secret fingerprint before re-enabling traffic.
+- Enforce timestamp + nonce validation and reject unsigned requests at the bridge.
+- Add automated rotation with a documented schedule and a canary check that fails closed if the two sides disagree.
+- Ensure the secret is never logged; redact it in error handlers and CI output.
+
+---
+
+## 9. Contacts
 
 | Role | Contact |
 |------|---------|
@@ -112,4 +151,4 @@ Complete within 5 business days of resolution:
 
 ---
 
-*Last updated: 2026-06-27*
+*Last updated: 2026-07-04*

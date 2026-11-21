@@ -95,3 +95,37 @@ begin
   order by total_kwh desc;
 end;
 $$;
+
+-- 3. Per-meter kWh series for stacked bar chart (kWh per meter per period)
+create or replace function get_cooperative_meter_kwh_series(
+  target_cooperative_id uuid,
+  start_date timestamptz,
+  end_date timestamptz,
+  granularity text default 'day'
+)
+returns table (
+  bucket timestamptz,
+  meter_id uuid,
+  meter_name text,
+  kwh numeric
+)
+language plpgsql
+security definer
+as $$
+begin
+  return query
+  select
+    date_trunc(granularity, r.timestamp) as bucket,
+    m.id as meter_id,
+    m.name as meter_name,
+    coalesce(sum(r.kwh), 0) as kwh
+  from readings r
+  join meters m on m.id = r.meter_id
+  where m.cooperative_id = target_cooperative_id
+    and r.timestamp >= start_date
+    and r.timestamp <= end_date
+    and r.anchored = true
+  group by 1, m.id, m.name
+  order by 1, m.name;
+end;
+$$;

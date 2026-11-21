@@ -39,13 +39,21 @@ export async function GET(
 
   const db = createAnonClient()
   let cert = null
-  for (const column of ['id', 'reading_hash', 'mint_tx_hash'] as const) {
+  for (const column of ['id', 'reading_hash', 'mint_tx_hash', 'anchor_tx_hash'] as const) {
     const { data } = await db.from('certificates').select('*').eq(column, id).maybeSingle()
     if (data) { cert = data; break }
   }
 
   if (!cert) {
-    return NextResponse.json({ error: 'Certificate not found' }, { status: 404 })
+    const isTxHash = /^[0-9a-f]{64}$/i.test(id)
+    return NextResponse.json(
+      {
+        error: isTxHash
+          ? 'No certificate found for this transaction hash'
+          : 'Certificate not found',
+      },
+      { status: 404 }
+    )
   }
 
   const { data: reading } = await db

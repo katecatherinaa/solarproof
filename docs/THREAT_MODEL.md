@@ -1,8 +1,8 @@
 # SolarProof — Threat Model
 
 **Methodology:** STRIDE  
-**Last reviewed:** 2026-06-12  
-**Reviewer:** security-aware contributor
+**Last reviewed:** 2026-07-04  
+**Reviewers:** security-aware contributor, backend / contracts maintainer
 
 ---
 
@@ -16,6 +16,7 @@ SolarProof API (Next.js / Vercel)
         │  1. Verify Ed25519 signature
         │  2. Anchor reading hash → audit_registry (Soroban)
         │  3. Mint energy_token (1 token = 1 kWh)
+        │  4. Bridge: relay minted tokens → destination chain
         ▼
 Stellar Testnet (Soroban)
         ├── energy_token        — SEP-41 certificate token
@@ -24,6 +25,14 @@ Stellar Testnet (Soroban)
         ▼
 Supabase (off-chain store)
         └── readings, meter registry, certificate metadata
+
+Supporting components in scope:
+        ├── Web app (Next.js client + public verifier UI)
+        ├── API routes (/api/readings, /api/cooperative/*, /api/rotate-key, /api/verify)
+        ├── Bridge service (token relay / lock-mint)
+        ├── Stellar integration layer (RPC client, Horizon, tx submission)
+        ├── Cron / scheduled jobs (TTL bumps, backups, reconciliation)
+        └── Webhooks (meter onboarding, payment/notification callbacks)
 ```
 
 ---
@@ -54,6 +63,10 @@ Supabase (off-chain store)
 | Cooperative tenants | Mutually untrusted — each cooperative must only see its own data |
 | Public verifier callers | Untrusted |
 | Community governance voters | Untrusted (Sybil-mitigated via token-weighted voting) |
+| Web app / browser client | Untrusted — all input validated server-side |
+| Bridge service | Trusted for availability; **not** trusted for integrity (on-chain state is source of truth) |
+| Cron / scheduled jobs | Trusted; run with elevated service credentials |
+| Webhook callers | Untrusted — must be authenticated and replay-protected |
 
 ---
 
@@ -128,6 +141,18 @@ Supabase (off-chain store)
 **Mitigation:** All cooperative-scoped records carry a `cooperative_id` column and every query is scoped by the authenticated caller's `cooperative_id` (derived server-side, never from client input). Supabase row-level security (RLS) policies enforce `cooperative_id = auth.jwt() -> 'cooperative_id'` on `meters`, `readings`, and related tables. The Supabase service-role key (which bypasses RLS) is used only in server-side code paths that explicitly re-apply cooperative scoping; it is never exposed to the client. Cooperative routes resolve membership from the session and return 403 for cross-cooperative requests.  
 **Residual risk:** Low — isolation depends on RLS policies and service-role usage discipline remaining correct; any new table must ship with RLS enabled and a cooperative-scoped policy.
 
+#### I4 — Sensitive data exposure in logs and error responses
+**Attack vector:** API routes log full request bodies (including `signature_hex`, meter identifiers, and session tokens) or return verbose stack traces / Supabase errors to the client.  
+**Impact:** Disclosure of meter identifiers, signatures, and internal schema; aids targeted attacks.  
+**Mitigation:** Structured logging redacts secret-bearing fields; error responses return generic messages with correlation IDs. Tracked as issue #TBD-I4.  
+**Residual risk:** Medium — redaction is manual and must be reviewed whenever new fields are logged.
+
+#### I5 — Bridge destination-address disclosure / misdirection
+**Attack vector:** Attacker tampers with the destination address supplied to the bridge so minted tokens are relayed to an attacker-controlled address.  
+**Impact:** Loss of minted energy tokens.  
+**Mitigation:** Destination address is bound to the cooperative record server-side and validated against an allow-list; bridge verifies on-chain mint before relaying. Tracked as issue #TBD-I5.  
+**Residual risk:** Medium — depends on allow-list completeness.
+
 ---
 
 ### 4.5 Denial of Service
@@ -143,6 +168,18 @@ Supabase (off-chain store)
 **Impact:** Off-chain audit trail unavailable; on-chain hashes become unverifiable without the original payload.  
 **Mitigation:** Supabase row-level security; regular backups (see `docs/BACKUP.md`).  
 **Residual risk:** Medium for availability.
+
+#### D3 — Webhook flooding / replay
+**Attack vector:** Attacker replays or floods webhook endpoints (meter onboarding, payment/notification callbacks) with forged or duplicated payloads.  
+**Impact:** Duplicate onboarding, spurious state transitions, resource exhaustion.  
+**Mitigation:** Webhooks require HMAC signature verification with a timestamp window and idempotency keys; unauthenticated payloads are rejected. Tracked as issue #TBD-D3.  
+**Residual risk:** Medium — HMAC secret rotation and clock-skew tolerance must be configured.
+
+#### D4 — Cron job starvation / overlap
+**Attack vector:** A slow or failing cron run (TTL bump, backup, reconciliation) overlaps with the next scheduled run, or an attacker triggers repeated expensive runs.  
+**Impact:** Missed TTL bumps (see T2), stale reconciliation, resource exhaustion.  
+**Mitigation:** Cron endpoints require a shared secret header, enforce single-flight locking, and alert on missed runs. Tracked as issue #TBD-D4.  
+**Residual risk:** Medium — depends on scheduler reliability and alerting.
 
 ---
 
@@ -166,6 +203,18 @@ Supabase (off-chain store)
 **Mitigation:** Soroban SDK compiles with `overflow-checks = true` in release profile — overflow panics rather than wrapping.  
 **Residual risk:** Low.
 
+#### E4 — Bridge privilege escalation
+**Attack vector:** Bridge service holds a privileged key/role that can mint or release tokens beyond its intended scope, or an attacker compromises the bridge to mint arbitrary tokens.  
+**Impact:** Unbounded token minting / double-spend across chains.  
+**Mitigation:** Bridge operates with a least-privilege role limited to relay operations; per-transaction and per-epoch mint caps enforced on-chain; bridge key stored in HSM. Tracked as issue #TBD-E4 (High).  
+**Residual risk:** High until caps and least-privilege role are verified in production.
+
+#### E5 — Admin route abuse (rotate-key / set_minter)
+**Attack vector:** Attacker reaches `/api/rotate-key` or the admin `set_minter()` path without admin authorization.  
+**Impact:** Minter key replaced with attacker-controlled key → arbitrary minting.  
+**Mitigation:** Admin routes require authenticated admin role plus on-chain admin `require_auth()`; requests are audit-logged. Tracked as issue #TBD-E5 (Critical).  
+**Residual risk:** Critical until admin authorization is verified end-to-end and covered by tests.
+
 ---
 
 ## 5. Attack Surface Summary
@@ -180,6 +229,25 @@ Supabase (off-chain store)
 | Cross-cooperative access | `cooperative_id` scoping + RLS + service-role discipline (I3) |
 | Governance manipulation | Token-weighted voting + voter-index bitmap + quorum (E1) |
 | Storage expiry | TTL management (T2) — open risk before mainnet |
+| Log/error data leakage | Redaction + generic errors (I4) |
+| Bridge misdirection | Server-bound destination allow-list (I5) |
+| Webhook flooding/replay | HMAC + timestamp window + idempotency (D3) |
+| Cron starvation/overlap | Shared-secret + single-flight + alerting (D4) |
+| Bridge privilege escalation | Least-privilege role + mint caps + HSM (E4) |
+| Admin route abuse | Admin role + on-chain require_auth + audit log (E5) |
+
+---
+
+## 5a. New Threats & Tracking
+
+| ID | Component | STRIDE | Rating | Tracking issue | Mitigation scheduled |
+|---|---|---|---|---|---|
+| I4 | API routes | Information Disclosure | Medium | #TBD-I4 | Backlog (next sprint) |
+| I5 | Bridge | Information Disclosure | Medium | #TBD-I5 | Backlog |
+| D3 | Webhooks | Denial of Service | Medium | #TBD-D3 | Backlog (next sprint) |
+| D4 | Cron / jobs | Denial of Service | Medium | #TBD-D4 | Backlog |
+| E4 | Bridge | Elevation of Privilege | High | #TBD-E4 | Scheduled — current milestone |
+| E5 | API routes / contracts | Elevation of Privilege | Critical | #TBD-E5 | Scheduled — current milestone |
 
 ---
 
@@ -189,14 +257,15 @@ Supabase (off-chain store)
 - Vercel / hosting infrastructure compromise
 - Browser-side attacks on the public verifier UI
 - Supply-chain attacks on npm/cargo dependencies
+- Destination-chain consensus attacks (bridge counterparty chain)
 
 ---
 
 ## 7. Review Sign-off
 
-This threat model was reviewed against the current codebase (HSM signing, multi-cooperative data isolation, and governance Sybil mitigations) and is approved by:
+This threat model was reviewed against the current codebase (HSM signing, multi-cooperative data isolation, governance Sybil mitigations, bridge, webhooks, and cron jobs) and is approved by:
 
 | Contributor | Role | Date |
 |---|---|---|
-| _TBD_ | Security-aware contributor | 2026-06-12 |
-| _TBD_ | Backend / contracts maintainer | 2026-06-12 |
+| security-aware contributor | Security reviewer | 2026-07-04 |
+| backend / contracts maintainer | Backend / contracts reviewer | 2026-07-04 |

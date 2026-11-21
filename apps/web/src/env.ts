@@ -1,6 +1,9 @@
 import { createEnv } from '@t3-oss/env-nextjs'
 import { z } from 'zod'
 
+// Server secrets that must be present at boot; a missing value hard-fails startup.
+export const REQUIRED_SERVER_SECRETS = ['INTERNAL_BRIDGE_SECRET'] as const
+
 // Explicit production allowlist. Only these origins are permitted by default.
 export const DEFAULT_CORS_ALLOWED_ORIGINS = [
   'https://solarproof.vercel.app',
@@ -69,6 +72,9 @@ export const env = createEnv({
     READINGS_RATE_LIMIT_PER_MINUTE: z.string().optional(),
     READINGS_RATE_LIMIT_WINDOW_SECONDS: z.string().optional(),
     WEBHOOK_SECRET: z.string().min(16).optional(),
+    // Shared secret for zero-trust auth between Next.js and the bridge service.
+    // Sent as the X-Internal-Secret header on outbound bridge calls.
+    INTERNAL_BRIDGE_SECRET: z.string().min(32),
     // EVM/Polygon certificate NFT minting (optional, opt-in per cooperative)
     EVM_NFT_MINTING_ENABLED: z
       .enum(['true', 'false'])
@@ -109,6 +115,7 @@ export const env = createEnv({
     READINGS_RATE_LIMIT_PER_MINUTE: process.env.READINGS_RATE_LIMIT_PER_MINUTE,
     READINGS_RATE_LIMIT_WINDOW_SECONDS: process.env.READINGS_RATE_LIMIT_WINDOW_SECONDS,
     WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
+    INTERNAL_BRIDGE_SECRET: process.env.INTERNAL_BRIDGE_SECRET,
     EVM_NFT_MINTING_ENABLED: process.env.EVM_NFT_MINTING_ENABLED,
     EVM_RPC_URL: process.env.EVM_RPC_URL,
     EVM_PRIVATE_KEY: process.env.EVM_PRIVATE_KEY,
@@ -116,3 +123,10 @@ export const env = createEnv({
     EVM_CHAIN_ID: process.env.EVM_CHAIN_ID,
   },
 })
+
+// Startup validator: fail fast if any required server secret is missing.
+for (const key of REQUIRED_SERVER_SECRETS) {
+  if (!process.env[key]) {
+    throw new Error(`Missing required server secret: ${key}`)
+  }
+}

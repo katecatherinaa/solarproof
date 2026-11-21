@@ -68,6 +68,24 @@ Acceptance Criteria
 | `STELLAR_TESTNET_SECRET_KEY` | 180 days | contracts-team | §5 Stellar Keys |
 | `VERCEL_TOKEN` | 90 days | devops-team | §6 Service Role Credentials |
 | `TURBO_TOKEN` | 90 days | devops-team | §6 Service Role Credentials |
+| `INTERNAL_BRIDGE_SECRET` | 90 days | backend-team | §8a Internal Bridge Secret |
+
+8a. Internal Bridge Secret (`INTERNAL_BRIDGE_SECRET`)
+
+The bridge microservice requires an `X-Internal-Secret` header on all internal API requests (zero-trust internal service authentication). Next.js injects the secret from its environment on every outbound bridge call. The same value must be configured on both services.
+
+- Where it lives:
+  - Next.js: `INTERNAL_BRIDGE_SECRET` env var (server-side only; never expose via `NEXT_PUBLIC_*`).
+  - Bridge: `INTERNAL_BRIDGE_SECRET` env var.
+  - GitHub: repository/environment secret `INTERNAL_BRIDGE_SECRET` used by deploy workflows.
+- To rotate without downtime (dual-accept window):
+  1. Generate a new high-entropy secret (e.g., `openssl rand -hex 32`) and store it in the secrets manager.
+  2. Deploy the bridge with both the old and new secrets accepted (dual-accept window). The bridge must continue to accept the old secret while the new one is being rolled out.
+  3. Update the Next.js `INTERNAL_BRIDGE_SECRET` env var to the new value and redeploy. Verify outbound bridge calls succeed.
+  4. Confirm no requests are still using the old secret (check bridge auth logs/metrics for the old key).
+  5. Remove the old secret from the bridge's accepted set and redeploy the bridge.
+  6. Revoke the old secret in the secrets manager and record the rotation in the audit log.
+- Compromise handling: if the secret is leaked, skip the dual-accept window — rotate immediately on both services, then audit bridge logs for unauthorized `X-Internal-Secret` usage.
 
 9. Automation — Rotation Reminder CI Job
 

@@ -129,18 +129,31 @@ Content-Type: application/json
 
 ### GET /api/verify
 
-Retrieve the full chain of custody for a certificate. Accepts a certificate ID, reading hash, or mint transaction hash.
+Retrieve the full chain of custody for a certificate. Accepts a certificate ID, reading hash, or Stellar transaction hash (anchor or mint).
 
 **Query parameters**
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `id` | `string` | ✅ | Certificate UUID, reading hash (hex), or mint transaction hash |
+| `id` | `string` | ✅ | Certificate UUID, reading hash (hex), or Stellar transaction hash (anchor or mint) |
 
-**Example request**
+**Accepted identifier formats**
+
+| Format | Example | Matched against |
+|---|---|---|
+| Certificate UUID | `a1b2c3d4-e5f6-7890-abcd-ef1234567890` | `certificates.id` |
+| 64-char hex hash | `4b3e…f09a` (64 hex chars) | `readings.reading_hash`, `anchor_tx_hash`, or `mint_tx_hash` |
+
+A 64-character hex value is looked up as a reading hash first, then as an anchor transaction hash, then as a mint transaction hash. This lets users arriving from a Stellar Explorer transaction link (`https://stellar.expert/explorer/testnet/tx/<hash>`) paste the hash directly.
+
+**Example requests**
 
 ```http
 GET /api/verify?id=a1b2c3d4-e5f6-7890-abcd-ef1234567890
+```
+
+```http
+GET /api/verify?id=4b3e8c1a2d5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
 ```
 
 **Responses**
@@ -149,8 +162,16 @@ GET /api/verify?id=a1b2c3d4-e5f6-7890-abcd-ef1234567890
 |---|---|
 | `200 OK` | Certificate found — returns chain of custody |
 | `400 Bad Request` | `id` parameter missing |
-| `404 Not Found` | No certificate matches the given `id` |
+| `404 Not Found` | No certificate matches the given `id` (including unknown transaction hashes) |
 | `429 Too Many Requests` | Rate limit exceeded (30 req/60s per IP) |
+
+**404 response body**
+
+```json
+{ "error": "Certificate not found" }
+```
+
+The same `404` response is returned for a well-formed but unknown 64-char hex hash, so callers cannot distinguish "hash not found" from "certificate not found".
 
 **200 response body**
 
@@ -835,6 +856,21 @@ Transfer a certificate to another cooperative.
 ### GET /api/v1/verify
 
 Identical to `GET /api/verify` — see [that endpoint](#get-apiverify). Also available at `GET /api/v1/verify/:id` (path-param form).
+
+The path-param form accepts the same identifier formats as the query-param form: a certificate UUID or a 64-char hex reading/anchor/mint transaction hash.
+
+**Example request**
+
+```http
+GET /api/v1/verify/4b3e8c1a2d5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9
+```
+
+**Responses**
+
+| Status | Meaning |
+|---|---|
+| `200 OK` | Certificate found — returns chain of custody |
+| `404 Not Found` | No certificate matches the given `id` (including unknown transaction hashes) |
 
 ---
 
