@@ -19,11 +19,17 @@ interface Certificate {
   id: string
   kwh: number
   issued_at: string
+  expires_at: string | null
   retired: boolean
   retired_at: string | null
   retired_by: string | null
   mint_tx_hash: string | null
   meter_id: string | null
+}
+
+function isExpired(cert: Certificate): boolean {
+  if (!cert.expires_at) return false
+  return new Date(cert.expires_at).getTime() < Date.now()
 }
 
 interface CertificatesResponse {
@@ -147,6 +153,8 @@ export default function CertificatesPage() {
       date_from: '',
       date_to: '',
       meter_id: '',
+      min_kwh: '',
+      max_kwh: '',
     },
     address
   )
@@ -156,6 +164,8 @@ export default function CertificatesPage() {
   const dateFrom = filters.date_from
   const dateTo = filters.date_to
   const meterId = filters.meter_id
+  const minKwh = filters.min_kwh
+  const maxKwh = filters.max_kwh
 
   // Local draft state for the search input (debounced via form submit)
   const [draft, setDraft] = useState(q)
@@ -174,12 +184,14 @@ export default function CertificatesPage() {
     if (dateFrom) params.set('date_from', dateFrom)
     if (dateTo) params.set('date_to', dateTo)
     if (meterId) params.set('meter_id', meterId)
+    if (minKwh) params.set('min_kwh', minKwh)
+    if (maxKwh) params.set('max_kwh', maxKwh)
     const next = params.toString()
     const current = searchParams.toString()
     if (next !== current) {
       router.replace(next ? `${pathname}?${next}` : pathname, { scroll: false })
     }
-  }, [isHydrated, q, status, dateFrom, dateTo, meterId, pathname, router, searchParams])
+  }, [isHydrated, q, status, dateFrom, dateTo, meterId, minKwh, maxKwh, pathname, router, searchParams])
 
   function pushParams(updates: Record<string, string>) {
     for (const [k, v] of Object.entries(updates)) {
@@ -192,7 +204,7 @@ export default function CertificatesPage() {
     resetFilters()
   }
 
-  const hasFilters = q || status || dateFrom || dateTo || meterId
+  const hasFilters = q || status || dateFrom || dateTo || meterId || minKwh || maxKwh
 
   const queryParams = new URLSearchParams()
   if (q) queryParams.set('q', q)
@@ -200,9 +212,11 @@ export default function CertificatesPage() {
   if (dateFrom) queryParams.set('date_from', dateFrom)
   if (dateTo) queryParams.set('date_to', dateTo)
   if (meterId) queryParams.set('meter_id', meterId)
+  if (minKwh) queryParams.set('min_kwh', minKwh)
+  if (maxKwh) queryParams.set('max_kwh', maxKwh)
 
   const { data: response, isLoading, error } = useQuery({
-    queryKey: ['certificates', q, status, dateFrom, dateTo, meterId],
+    queryKey: ['certificates', q, status, dateFrom, dateTo, meterId, minKwh, maxKwh],
     queryFn: () => fetchCertificates(queryParams),
   })
 
@@ -377,6 +391,40 @@ export default function CertificatesPage() {
             />
           </div>
 
+          {/* kWh range */}
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="min-kwh" className="text-xs text-gray-500 dark:text-gray-400">
+              kWh min
+            </label>
+            <input
+              id="min-kwh"
+              type="number"
+              min="0"
+              step="any"
+              value={minKwh}
+              onChange={(e) => pushParams({ min_kwh: e.target.value })}
+              placeholder="0"
+              aria-label="Filter by minimum kWh"
+              className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <label htmlFor="max-kwh" className="text-xs text-gray-500 dark:text-gray-400">
+              kWh max
+            </label>
+            <input
+              id="max-kwh"
+              type="number"
+              min="0"
+              step="any"
+              value={maxKwh}
+              onChange={(e) => pushParams({ max_kwh: e.target.value })}
+              placeholder="∞"
+              aria-label="Filter by maximum kWh"
+              className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
+            />
+          </div>
+
           {/* Date range */}
           <div className="flex items-center gap-1.5">
             <label htmlFor="date-from" className="text-xs text-gray-500 dark:text-gray-400">
@@ -472,7 +520,7 @@ export default function CertificatesPage() {
                       className="h-4 w-4 rounded border-gray-300 text-green-600 focus-visible:ring-green-500"
                     />
                   </th>
-                  {['Certificate ID', 'Meter ID', 'kWh', 'Issued', 'Status', 'Action'].map((h) => (
+                  {['Certificate ID', 'Meter ID', 'kWh', 'Issued', 'Expires', 'Status', 'Action'].map((h) => (
                     <th
                       key={h}
                       scope="col"
@@ -487,7 +535,7 @@ export default function CertificatesPage() {
                 {isLoading ? (
                   <>
                     {Array.from({ length: 8 }).map((_, i) => (
-                      <TableRowSkeleton key={i} cols={7} />
+                      <TableRowSkeleton key={i} cols={8} />
                     ))}
                   </>
                 ) : data.length > 0 ? (
@@ -514,11 +562,19 @@ export default function CertificatesPage() {
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                         {new Date(cert.issued_at).toLocaleDateString()}
                       </td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+                        {cert.expires_at ? new Date(cert.expires_at).toLocaleDateString() : '—'}
+                      </td>
                       <td className="px-4 py-3">
                         {cert.retired ? (
                           <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
                             <Leaf className="h-3 w-3" aria-hidden="true" />
                             Retired
+                          </span>
+                        ) : isExpired(cert) ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                            Expired
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
@@ -562,7 +618,7 @@ export default function CertificatesPage() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                    <td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
                       No certificates found.
                     </td>
                   </tr>

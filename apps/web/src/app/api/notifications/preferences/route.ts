@@ -7,6 +7,8 @@ export interface NotificationPreferences {
   webhook: boolean;
   webhookUrl: string;
   webhookSecret: string;
+  monthlyReportEnabled: boolean;
+  reportEmail: string;
 }
 
 const DEFAULT_PREFERENCES: NotificationPreferences = {
@@ -16,6 +18,8 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
   webhook: false,
   webhookUrl: '',
   webhookSecret: '',
+  monthlyReportEnabled: false,
+  reportEmail: '',
 };
 
 // In-memory store keyed by operator id. Replace with persistent storage in production.
@@ -108,6 +112,30 @@ function validatePreferences(body: unknown): ValidationResult {
     errors.push('"webhookSecret" must be a string.');
   }
 
+  const monthlyReportEnabled =
+    input.monthlyReportEnabled === undefined
+      ? DEFAULT_PREFERENCES.monthlyReportEnabled
+      : input.monthlyReportEnabled;
+  if (typeof monthlyReportEnabled !== 'boolean') {
+    errors.push('"monthlyReportEnabled" must be a boolean.');
+  }
+
+  const reportEmail =
+    input.reportEmail === undefined ? DEFAULT_PREFERENCES.reportEmail : input.reportEmail;
+  if (typeof reportEmail !== 'string') {
+    errors.push('"reportEmail" must be a string.');
+  } else if (reportEmail.trim().length > 0 && !EMAIL_REGEX.test(reportEmail.trim())) {
+    errors.push('"reportEmail" must be a valid email address.');
+  } else if (
+    monthlyReportEnabled === true &&
+    reportEmail.trim().length === 0 &&
+    emailAddress.trim().length === 0
+  ) {
+    errors.push(
+      '"reportEmail" or "emailAddress" is required when monthly report delivery is enabled.',
+    );
+  }
+
   if (errors.length > 0) {
     return { valid: false, errors };
   }
@@ -122,6 +150,8 @@ function validatePreferences(body: unknown): ValidationResult {
       webhook: webhook as boolean,
       webhookUrl: (webhookUrl as string).trim(),
       webhookSecret: webhookSecret as string,
+      monthlyReportEnabled: monthlyReportEnabled as boolean,
+      reportEmail: (reportEmail as string).trim(),
     },
   };
 }

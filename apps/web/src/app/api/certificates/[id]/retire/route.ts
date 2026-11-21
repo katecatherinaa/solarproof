@@ -47,6 +47,15 @@ export async function POST(
     return NextResponse.json({ error: 'Certificate already retired' }, { status: 409 })
   }
 
+  if (cert.expires_at && new Date(cert.expires_at).getTime() <= Date.now()) {
+    return NextResponse.json(
+      {
+        error: `Certificate expired on ${new Date(cert.expires_at).toISOString()} and can no longer be retired`,
+      },
+      { status: 400 }
+    )
+  }
+
   // Call energy_token burn on Soroban
   let retireTxHash: string
   try {
@@ -102,7 +111,7 @@ export async function POST(
     beneficiary: wallet_address,
     volumeWh: cert.kwh * 1000,
     vintageStart: new Date(cert.issued_at).toISOString(),
-    vintageEnd: new Date(cert.issued_at).toISOString(),
+    vintageEnd: new Date(cert.expires_at ?? cert.issued_at).toISOString(),
     notes: `Retired via SolarProof: ${cert.id}`,
   })
 

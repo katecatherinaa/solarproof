@@ -125,9 +125,46 @@ const ACCESS_TOKEN_COOKIE = 'sp_access_token'
  *
  * Also checks the revocation list before accepting the token.
  */
+export interface AuthContext {
+  user: { id: string; email?: string }
+  accessToken: string
+  /** The cooperative currently active for this session (JWT cooperative_id claim). */
+  cooperativeId: string
+  /** All cooperatives the user may switch to (includes the current one). */
+  cooperativeIds: string[]
+}
+
+/**
+ * Resolve the full set of cooperatives a user may access.
+ *
+ * Prefers the `cooperative_ids` app_metadata claim (multi-cooperative accounts).
+ * Falls back to the single `cooperative_id` claim for backward compatibility.
+ * The current cooperative is always included, even if the claims disagree.
+ */
+export function resolveCooperativeIds(
+  appMetadata: Record<string, unknown>,
+  currentCooperativeId: string
+): string[] {
+  const ids = new Set<string>()
+
+  const rawList = appMetadata.cooperative_ids
+  if (Array.isArray(rawList)) {
+    for (const value of rawList) {
+      if (typeof value === 'string' && value.length > 0) ids.add(value)
+    }
+  }
+
+  const single = appMetadata.cooperative_id
+  if (typeof single === 'string' && single.length > 0) ids.add(single)
+
+  ids.add(currentCooperativeId)
+
+  return Array.from(ids)
+}
+
 export async function requireAuth(
   req: NextRequest
-): Promise<{ user: { id: string; email?: string }; accessToken: string; cooperativeId: string } | NextResponse> {
+): Promise<AuthContext | NextResponse> {
   // Prefer HttpOnly cookie over Authorization header.
   const cookieToken = req.cookies.get(ACCESS_TOKEN_COOKIE)?.value ?? null
   const authHeader = req.headers.get('authorization') ?? ''
@@ -155,8 +192,9 @@ export async function requireAuth(
     return NextResponse.json({ error: 'Invalid or expired token' }, { status: 401 })
   }
 
-  const cooperativeId = data.user.app_metadata.cooperative_id
-  if (!cooperativeId) {
+  const appMetadata = (data.user.app_metadata ?? {}) as Record<string, unknown>
+  const cooperativeId = appMetadata.cooperative_id
+  if (typeof cooperativeId !== 'string' || !cooperativeId) {
     return NextResponse.json({ error: 'User has no associated cooperative' }, { status: 403 })
   }
 
@@ -164,6 +202,7 @@ export async function requireAuth(
     user: { id: data.user.id, email: data.user.email },
     accessToken,
     cooperativeId,
+    cooperativeIds: resolveCooperativeIds(appMetadata, cooperativeId),
   }
 }
 

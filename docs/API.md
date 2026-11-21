@@ -127,6 +127,64 @@ Content-Type: application/json
 
 ---
 
+### GET /api/explore/certificates
+
+Public, unauthenticated listing of all verified certificates. Powers the public `/explore` page (issue #782). Results are paginated at **20 per page** by default and each certificate links to `/verify/[id]`.
+
+**Auth:** Not required.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | `integer` | `1` | 1-based page number |
+| `limit` | `integer` | `20` | Page size (max 100) |
+| `cooperative` | `string` | — | Case-insensitive substring match on cooperative name |
+| `date_from` | ISO date | — | Inclusive lower bound on `issued_at` |
+| `date_to` | ISO date | — | Inclusive upper bound on `issued_at` |
+| `kwh_min` | `number` | — | Inclusive lower bound on `kwh` |
+| `kwh_max` | `number` | — | Inclusive upper bound on `kwh` |
+
+**Example request**
+
+```http
+GET /api/explore/certificates?cooperative=Sunshine&date_from=2026-01-01&kwh_min=1&kwh_max=100&page=2
+```
+
+**200 response body**
+
+```json
+{
+  "data": [
+    {
+      "id": "cert-uuid",
+      "kwh": 12.5,
+      "issued_at": "2026-04-23T10:00:00.000Z",
+      "expires_at": "2027-04-23T10:00:00.000Z",
+      "retired": false,
+      "cooperative_id": "coop-uuid",
+      "cooperative_name": "Sunshine Coop",
+      "meter_id": "meter-uuid",
+      "verify_url": "/verify/cert-uuid"
+    }
+  ],
+  "page": 2,
+  "limit": 20,
+  "total": 142,
+  "total_pages": 8
+}
+```
+
+**Responses**
+
+| Status | Meaning |
+|---|---|
+| `200 OK` | Certificate page |
+| `400 Bad Request` | Invalid query params (`{ "error": string }`) |
+| `500 Internal Server Error` | Database error |
+
+---
+
 ### GET /api/verify
 
 Retrieve the full chain of custody for a certificate. Accepts a certificate ID, reading hash, or mint transaction hash.
@@ -160,6 +218,8 @@ GET /api/verify?id=a1b2c3d4-e5f6-7890-abcd-ef1234567890
     "id": "uuid",
     "kwh": 12.5,
     "issued_at": "2026-04-23T00:00:00.000Z",
+    "expires_at": "2027-04-23T00:00:00.000Z",
+    "expired": false,
     "retired": false,
     "retired_at": null,
     "retired_by": null
@@ -182,6 +242,8 @@ GET /api/verify?id=a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
 `meter_proof` is `null` if the associated reading record cannot be found.
+
+`expires_at` is `null` when the certificate has no validity period. `expired` is `true` when `expires_at` is in the past and the certificate has not been retired.
 
 ---
 
@@ -239,7 +301,7 @@ List registered webhook endpoints for a cooperative.
 
 ### GET /api/cooperative/retirement-report
 
-Monthly certificate retirement report for a cooperative. Returns the total kWh retired in the requested month, a per-buyer breakdown, and the retired certificate IDs. The report can be returned as JSON or downloaded as CSV.
+Monthly cooperative summary report (issue #785). Returns the total kWh retired in the requested period, a per-buyer breakdown, the retired certificate IDs, and a **production summary** covering total kWh produced, certificates issued and retired, broken down by meter. The report can be returned as JSON, CSV, or PDF.
 
 **Authentication**
 
@@ -249,8 +311,12 @@ Requires a cooperative admin session (Supabase auth cookie). The authenticated u
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `month` | `string` (`YYYY-MM`) | ✅ | Calendar month (UTC) to report on, e.g. `2026-04` |
-| `format` | `string` | ❌ | `json` (default) or `csv` |
+| `month` | `string` (`YYYY-MM`) | ❌* | Calendar month (UTC) to report on, e.g. `2026-04` |
+| `date_from` | ISO date | ❌* | Inclusive start of an arbitrary date range |
+| `date_to` | ISO date | ❌* | Inclusive end of an arbitrary date range |
+| `format` | `string` | ❌ | `json` (default), `csv`, or `pdf` |
+
+\* Either `month` or both `date_from` and `date_to` must be supplied. When `month` is given it takes precedence.
 
 **Example requests**
 
@@ -259,15 +325,19 @@ GET /api/cooperative/retirement-report?month=2026-04
 ```
 
 ```http
-GET /api/cooperative/retirement-report?month=2026-04&format=csv
+GET /api/cooperative/retirement-report?date_from=2026-01-01&date_to=2026-03-31&format=csv
+```
+
+```http
+GET /api/cooperative/retirement-report?month=2026-04&format=pdf
 ```
 
 **Responses**
 
 | Status | Meaning | Body |
 |---|---|---|
-| `200 OK` | Report generated | JSON report, or CSV file (`text/csv`) when `format=csv` |
-| `400 Bad Request` | `month` missing or not in `YYYY-MM` format, or invalid `format` | `{ error: string }` |
+| `200 OK` | Report generated | JSON report, or CSV (`text/csv`) / PDF (`application/pdf`) attachment |
+| `400 Bad Request` | No period supplied, invalid date format, or invalid `format` | `{ error: string }` |
 | `401 Unauthorized` | No authenticated session | `{ error: string }` |
 | `403 Forbidden` | Authenticated user is not a cooperative admin | `{ error: string }` |
 | `500 Internal Server Error` | Database query failed | `{ error: string }` |
@@ -277,6 +347,8 @@ GET /api/cooperative/retirement-report?month=2026-04&format=csv
 ```json
 {
   "month": "2026-04",
+  "date_from": "2026-04-01",
+  "date_to": "2026-04-30",
   "cooperative_id": "uuid",
   "total_kwh_retired": 1250.5,
   "total_certificates": 42,
@@ -288,13 +360,35 @@ GET /api/cooperative/retirement-report?month=2026-04&format=csv
       "certificate_count": 25,
       "certificate_ids": ["uuid", "uuid"]
     }
-  ]
+  ],
+  "production": {
+    "total_kwh_produced": 2100.0,
+    "certificates_issued": 2100,
+    "certificates_retired": 42,
+    "by_meter": [
+      {
+        "meter_id": "uuid",
+        "meter_name": "Roof Panel A",
+        "kwh_produced": 840.0,
+        "certificates_issued": 840,
+        "certificates_retired": 18
+      }
+    ]
+  }
 }
 ```
 
 **CSV response**
 
-When `format=csv` is requested, the response has `Content-Type: text/csv` and `Content-Disposition: attachment; filename="retirement-report-2026-04.csv"`. Columns: `buyer_id`, `buyer_name`, `certificate_id`, `kwh`, `retired_at`.
+When `format=csv` is requested, the response has `Content-Type: text/csv` and `Content-Disposition: attachment; filename="cooperative-report-<period>.csv"`. The file contains two sections: retirement rows (`buyer_id`, `buyer_name`, `certificate_id`, `kwh`, `retired_at`) followed by production rows (`meter_id`, `meter_name`, `kwh_produced`, `certificates_issued`, `certificates_retired`).
+
+**PDF response**
+
+When `format=pdf` is requested, the response has `Content-Type: application/pdf` and `Content-Disposition: attachment; filename="cooperative-report-<period>.pdf"`. The PDF contains the same retirement and production summary tables.
+
+**Automated monthly delivery**
+
+Monthly email delivery of the report is configurable per cooperative. When enabled, a scheduled cron job (`/api/cron/monthly-report`, protected by the `CRON_SECRET` bearer token) generates the previous month's report and emails it to the configured recipients. Configure recipients and enable/disable delivery via the cooperative settings; the cron endpoint is not intended for direct public use.
 
 ---
 
@@ -469,6 +563,40 @@ Authorization: Bearer <jwt>
 |---|---|
 | `200 OK` | `{ "message": "Logged out" }` |
 | `401 Unauthorized` | `{ "error": "Unauthorized" }` |
+
+---
+
+### POST /api/v1/auth/switch-cooperative
+
+Switch the active cooperative for an account that holds roles in more than one cooperative (issue #783). Issues a new JWT whose `cooperative_id` claim is set to the requested cooperative, so all subsequent data views are scoped to it.
+
+**Auth:** Bearer JWT required.
+
+**Request body**
+
+| Field | Type | Description |
+|---|---|---|
+| `cooperative_id` | `string` (UUID) | Cooperative to switch to; the user must hold a role in it |
+
+**Example request**
+
+```http
+POST /api/v1/auth/switch-cooperative
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{ "cooperative_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890" }
+```
+
+**Responses**
+
+| Status | Body |
+|---|---|
+| `200 OK` | `{ "access_token": "<new-jwt>", "token_type": "Bearer", "expires_in": 3600, "cooperative": { "id": "uuid", "name": "Sunshine Coop" } }` |
+| `400 Bad Request` | `{ "error": { "fieldErrors": {...}, "formErrors": [] } }` |
+| `401 Unauthorized` | `{ "error": "Unauthorized" }` |
+| `403 Forbidden` | `{ "error": "You do not have access to this cooperative" }` |
+| `500 Internal Server Error` | `{ "error": "<message>" }` |
 
 ---
 
@@ -722,6 +850,8 @@ GET /api/v1/certificates?limit=10&status=active&date_from=2026-01-01
       "id": "cert-uuid",
       "kwh": 12.5,
       "issued_at": "2026-04-23T10:00:00.000Z",
+      "expires_at": "2027-04-23T10:00:00.000Z",
+      "expired": false,
       "retired": false,
       "retired_at": null,
       "retired_by": null,
@@ -764,12 +894,14 @@ Authorization: Bearer <jwt>
 | Status | Body |
 |---|---|
 | `200 OK` | `{ "success": true, "retired_at": "<iso-timestamp>" }` |
-| `400 Bad Request` | `{ "error": "Certificate already retired" }` |
+| `400 Bad Request` | `{ "error": "Certificate already retired" }` or `{ "error": "Certificate expired on <iso-timestamp> and cannot be retired" }` |
 | `401 Unauthorized` | `{ "error": "Unauthorized" }` |
 | `404 Not Found` | `{ "error": "Certificate not found" }` |
 | `500 Internal Server Error` | `{ "error": "<message>" }` |
 
 > **Warning:** Retirement is irreversible. The certificate token is burned on-chain.
+
+> **Expiry (issue #784):** Certificates may carry an `expires_at` timestamp. Retirement of a certificate whose `expires_at` is in the past is rejected with `400 Bad Request` and the descriptive error shown above. Certificates with `expires_at: null` never expire.
 
 ---
 
@@ -794,9 +926,15 @@ Authorization: Bearer <jwt>
   "productionStart": "2026-04-23T00:00:00.000Z",
   "productionEnd": "2026-04-23T23:59:59.000Z",
   "volume": 0.0000125,
+  "validityPeriod": {
+    "start": "2026-04-23T00:00:00.000Z",
+    "end": "2027-04-23T00:00:00.000Z"
+  },
   "mrvDocumentUrl": "https://solarproof.vercel.app/verify?id=cert-uuid"
 }
 ```
+
+`validityPeriod.end` is derived from the certificate's `expires_at`; it is `null` when the certificate has no expiry.
 
 **Responses**
 
@@ -1012,9 +1150,15 @@ Authorization: Bearer <jwt>
   "account_type": "cooperative",
   "admin_address": "GABC...XYZ",
   "suspended": false,
-  "created_at": "2026-01-01T00:00:00.000Z"
+  "created_at": "2026-01-01T00:00:00.000Z",
+  "memberships": [
+    { "cooperative_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "name": "Sunshine Coop", "role": "admin" },
+    { "cooperative_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901", "name": "Windy Coop", "role": "operator" }
+  ]
 }
 ```
+
+`memberships` lists every cooperative the authenticated user can access and is used to populate the cooperative switcher in the navbar (issue #783). Switch the active cooperative with `POST /api/v1/auth/switch-cooperative`.
 
 **Responses**
 

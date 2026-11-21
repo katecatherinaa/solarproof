@@ -78,6 +78,10 @@ tags:
     description: Background job status polling
   - name: audit
     description: Audit log export
+  - name: explore
+    description: Public certificate explorer (no auth required)
+  - name: cooperative
+    description: Cooperative-level reporting and summaries
   - name: health
     description: Service health check
 
@@ -203,6 +207,45 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+
+  /api/auth/switch-cooperative:
+    post:
+      operationId: switchCooperative
+      tags: [auth]
+      summary: Switch the active cooperative for the current session
+      description: |
+        Issues a new access token whose `cooperative_id` claim is set to the
+        requested cooperative. The caller must hold a role in the target
+        cooperative. The returned refresh token replaces the previous one.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SwitchCooperativeRequest'
+            example:
+              cooperative_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+      responses:
+        '200':
+          description: Cooperative switched — new token pair issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller has no role in the requested cooperative
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Not a member of the requested cooperative
 
   /api/auth/logout:
     post:
@@ -514,6 +557,139 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+
+  /api/explore/certificates:
+    get:
+      operationId: exploreCertificates
+      tags: [explore]
+      summary: Public certificate explorer listing
+      description: |
+        Public endpoint — no authentication required. Backs the `/explore` page.
+
+        Lists all certificates with offset pagination (20 per page by default).
+        Supports filtering by cooperative name, date range, and kWh range.
+        Each returned certificate can be verified via `GET /api/verify/{id}`.
+      security: []
+      parameters:
+        - name: page
+          in: query
+          description: 1-based page number
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: per_page
+          in: query
+          description: Results per page (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: cooperative_name
+          in: query
+          description: Case-insensitive substring match on cooperative name
+          schema:
+            type: string
+        - name: date_from
+          in: query
+          description: Inclusive lower bound on `issued_at` (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          description: Inclusive upper bound on `issued_at` (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: kwh_min
+          in: query
+          description: Inclusive lower bound on certificate kWh
+          schema:
+            type: number
+            minimum: 0
+        - name: kwh_max
+          in: query
+          description: Inclusive upper bound on certificate kWh
+          schema:
+            type: number
+            minimum: 0
+      responses:
+        '200':
+          description: Paginated list of certificates
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: public, max-age=60, stale-while-revalidate=30
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExploreCertificateListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/cooperative/retirement-report:
+    get:
+      operationId: getCooperativeRetirementReport
+      tags: [cooperative]
+      summary: Cooperative retirement and production summary report
+      description: |
+        Returns a cooperative-level summary covering total kWh produced,
+        certificates issued and retired, broken down by meter, for the given
+        date range. Supports CSV and PDF export.
+
+        Requires an operator JWT scoped to the cooperative.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date_from
+          in: query
+          description: Inclusive start of the reporting range (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          description: Inclusive end of the reporting range (ISO date)
+          schema:
+            type: string
+            format: date
+        - name: format
+          in: query
+          description: Output format
+          schema:
+            type: string
+            enum: [json, csv, pdf]
+            default: json
+      responses:
+        '200':
+          description: Report generated
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: 'attachment; filename="cooperative_report_2026-01-01_2026-01-31.csv"'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CooperativeReport'
+            text/csv:
+              schema:
+                type: string
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/certificates:
     get:
@@ -884,6 +1060,14 @@ paths:
                 $ref: '#/components/schemas/Error'
               example:
                 error: Certificate already retired
+        '410':
+          description: Certificate has expired and cannot be retired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: Certificate expired on 2026-01-01T00:00:00Z and cannot be retired
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -1176,6 +1360,15 @@ components:
           type: string
           minLength: 1
 
+    SwitchCooperativeRequest:
+      type: object
+      required: [cooperative_id]
+      properties:
+        cooperative_id:
+          type: string
+          format: uuid
+          description: Cooperative to make active for the new token
+
     TokenResponse:
       type: object
       required: [access_token, refresh_token, expires_in, token_type]
@@ -1378,6 +1571,13 @@ components:
         issued_at:
           type: string
           format: date-time
+        expires_at:
+          type: ['string', 'null']
+          format: date-time
+          description: |
+            Validity period end. Null when the certificate does not expire.
+            Certificates past `expires_at` are shown with an `Expired` badge
+            and cannot be retired.
         retired:
           type: boolean
         retired_at:
@@ -1390,6 +1590,100 @@ components:
         meter_id:
           type: ['string', 'null']
           format: uuid
+
+    ExploreCertificateListResponse:
+      type: object
+      required: [data, page, per_page, total, total_pages]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExploreCertificate'
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    ExploreCertificate:
+      type: object
+      required: [id, kwh, issued_at, retired, verify_url]
+      properties:
+        id:
+          type: string
+          format: uuid
+        kwh:
+          type: number
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: ['string', 'null']
+          format: date-time
+        retired:
+          type: boolean
+        cooperative_id:
+          type: ['string', 'null']
+          format: uuid
+        cooperative_name:
+          type: ['string', 'null']
+        meter_id:
+          type: ['string', 'null']
+          format: uuid
+        verify_url:
+          type: string
+          description: Relative link to the public verification page
+          example: /verify/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+    CooperativeReport:
+      type: object
+      required: [cooperative_id, date_from, date_to, totals, by_meter]
+      properties:
+        cooperative_id:
+          type: string
+          format: uuid
+        date_from:
+          type: string
+          format: date
+        date_to:
+          type: string
+          format: date
+        totals:
+          $ref: '#/components/schemas/CooperativeReportTotals'
+        by_meter:
+          type: array
+          items:
+            $ref: '#/components/schemas/CooperativeReportMeterRow'
+
+    CooperativeReportTotals:
+      type: object
+      required: [kwh_produced, certificates_issued, certificates_retired]
+      properties:
+        kwh_produced:
+          type: number
+        certificates_issued:
+          type: integer
+        certificates_retired:
+          type: integer
+
+    CooperativeReportMeterRow:
+      type: object
+      required: [meter_id, kwh_produced, certificates_issued, certificates_retired]
+      properties:
+        meter_id:
+          type: string
+          format: uuid
+        serial_number:
+          type: ['string', 'null']
+        kwh_produced:
+          type: number
+        certificates_issued:
+          type: integer
+        certificates_retired:
+          type: integer
 
     RetireRequest:
       type: object
@@ -1440,6 +1734,10 @@ components:
             retired_by:
               type: ['string', 'null']
               description: Stellar wallet address that retired the certificate
+            expires_at:
+              type: ['string', 'null']
+              format: date-time
+              description: Validity period end; null when the certificate does not expire
         on_chain:
           type: object
           required: [anchor_tx, anchor_explorer, mint_tx, mint_explorer]

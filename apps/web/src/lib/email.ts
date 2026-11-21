@@ -185,6 +185,95 @@ export async function sendRetirementReportEmail(
   }
 }
 
+export interface CooperativeSummaryMeterRow {
+  meter_id: string
+  meter_name?: string
+  kwh_produced: number
+  certificates_issued: number
+  certificates_retired: number
+}
+
+export interface CooperativeSummaryReportParams {
+  /** Report period label, e.g. "2024-06" or "2024-06-01 to 2024-06-30". */
+  period: string
+  total_kwh_produced: number
+  certificates_issued: number
+  certificates_retired: number
+  meters: CooperativeSummaryMeterRow[]
+  cooperative_id?: string
+  /** Optional link to download the CSV export of this report. */
+  csv_url?: string
+  /** Optional link to download the PDF export of this report. */
+  pdf_url?: string
+}
+
+/**
+ * Send the cooperative-level energy production summary report (#785).
+ *
+ * Renders total kWh produced, certificates issued/retired and a per-meter
+ * breakdown, plus optional CSV/PDF download links. Fire-and-forget: failures
+ * are logged but never thrown, consistent with the other senders here.
+ */
+export async function sendCooperativeSummaryReportEmail(
+  to: string,
+  params: CooperativeSummaryReportParams,
+): Promise<void> {
+  try {
+    const meterRows = params.meters.length
+      ? params.meters
+          .map(
+            (m) => `
+      <tr>
+        <td style="padding:8px;border-top:1px solid #e5e7eb;font-family:monospace;font-size:12px">${escapeHtml(m.meter_id)}</td>
+        <td style="padding:8px;border-top:1px solid #e5e7eb">${escapeHtml(m.meter_name ?? '—')}</td>
+        <td style="padding:8px;border-top:1px solid #e5e7eb;text-align:right">${m.kwh_produced}</td>
+        <td style="padding:8px;border-top:1px solid #e5e7eb;text-align:right">${m.certificates_issued}</td>
+        <td style="padding:8px;border-top:1px solid #e5e7eb;text-align:right">${m.certificates_retired}</td>
+      </tr>`,
+          )
+          .join('')
+      : `<tr><td colspan="5" style="padding:8px;border-top:1px solid #e5e7eb;color:#6b7280">No meter activity recorded for this period.</td></tr>`
+
+    const downloadLinks = [
+      params.csv_url ? `<a href="${escapeHtml(params.csv_url)}">Download CSV</a>` : '',
+      params.pdf_url ? `<a href="${escapeHtml(params.pdf_url)}">Download PDF</a>` : '',
+    ]
+      .filter(Boolean)
+      .join(' &nbsp;|&nbsp; ')
+
+    const html = baseTemplate(`Production Summary — ${params.period} 📊`, `
+    <p>Here is the energy production summary report for your cooperative.</p>
+    <table style="border-collapse:collapse;width:100%;margin-bottom:16px">
+      <tr><td style="padding:8px;font-weight:bold">Period</td><td style="padding:8px">${escapeHtml(params.period)}</td></tr>
+      <tr><td style="padding:8px;font-weight:bold">Total kWh produced</td><td style="padding:8px">${params.total_kwh_produced}</td></tr>
+      <tr><td style="padding:8px;font-weight:bold">Certificates issued</td><td style="padding:8px">${params.certificates_issued}</td></tr>
+      <tr><td style="padding:8px;font-weight:bold">Certificates retired</td><td style="padding:8px">${params.certificates_retired}</td></tr>
+    </table>
+    ${downloadLinks ? `<p>${downloadLinks}</p>` : ''}
+    <h3 style="margin-bottom:8px">Per-meter breakdown</h3>
+    <table style="border-collapse:collapse;width:100%">
+      <thead>
+        <tr>
+          <th style="padding:8px;text-align:left;border-bottom:1px solid #e5e7eb">Meter ID</th>
+          <th style="padding:8px;text-align:left;border-bottom:1px solid #e5e7eb">Name</th>
+          <th style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">kWh produced</th>
+          <th style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">Issued</th>
+          <th style="padding:8px;text-align:right;border-bottom:1px solid #e5e7eb">Retired</th>
+        </tr>
+      </thead>
+      <tbody>${meterRows}</tbody>
+    </table>
+  `)
+    await sendEmail({
+      to,
+      subject: `SolarProof: production summary for ${params.period}`,
+      html,
+    })
+  } catch (err) {
+    console.error('[email] cooperative summary report send failed', err)
+  }
+}
+
 /**
  * Certificate status values that can trigger a notification email (#121).
  */
