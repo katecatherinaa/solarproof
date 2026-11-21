@@ -20,6 +20,12 @@ import { CopyButton, CopyableText } from '@/components/copy-button'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { ToastProvider, ToastContainer } from '@/components/toast'
 import { Navbar } from '@/components/navbar'
+import {
+  DashboardEmptyState,
+  CertificatesEmptyState,
+  MetersEmptyState,
+  GovernanceEmptyState,
+} from '@/components/empty-states'
 import React from 'react'
 
 // Mocks
@@ -217,6 +223,28 @@ describe('Toast components snapshots', () => {
 describe('Navbar snapshots', () => {
   it('Navbar renders correctly', () => {
     const { container } = render(<Navbar locale="en" />)
+    expect(container.firstChild).toMatchSnapshot()
+  })
+})
+
+describe('Empty state snapshots', () => {
+  it('DashboardEmptyState renders correctly', () => {
+    const { container } = render(<DashboardEmptyState />)
+    expect(container.firstChild).toMatchSnapshot()
+  })
+
+  it('CertificatesEmptyState renders correctly', () => {
+    const { container } = render(<CertificatesEmptyState />)
+    expect(container.firstChild).toMatchSnapshot()
+  })
+
+  it('MetersEmptyState renders correctly', () => {
+    const { container } = render(<MetersEmptyState />)
+    expect(container.firstChild).toMatchSnapshot()
+  })
+
+  it('GovernanceEmptyState renders correctly', () => {
+    const { container } = render(<GovernanceEmptyState />)
     expect(container.firstChild).toMatchSnapshot()
   })
 })

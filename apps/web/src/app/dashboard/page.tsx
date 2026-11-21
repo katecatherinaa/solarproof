@@ -21,6 +21,7 @@ import { StatCardSkeleton, ChartSkeleton, TableRowSkeleton } from '@/components/
 import { useState, useMemo, memo } from 'react'
 import { useRealtimeReadings } from '@/hooks/use-realtime-readings'
 import { ErrorBoundary } from '@/components/error-boundary'
+import { DashboardEmptyState } from '@/components/empty-states/dashboard-empty-state'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -673,6 +674,9 @@ export default function DashboardPage() {
       {/* Recent Activity */}
       <section>
         <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-gray-100">Recent readings</h2>
+        {!readingsLoading && !readingsError && (readings?.length ?? 0) === 0 ? (
+          <DashboardEmptyState />
+        ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
           <table className="min-w-full divide-y divide-gray-200 bg-white text-sm dark:divide-gray-800 dark:bg-gray-900">
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -693,6 +697,7 @@ export default function DashboardPage() {
             </tbody>
           </table>
         </div>
+        )}
       </section>
     </div>
     </WalletGate>

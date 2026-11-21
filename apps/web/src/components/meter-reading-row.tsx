@@ -1,3 +1,5 @@
+import { useTranslations } from 'next-intl'
+
 interface MeterReadingRowProps {
   id: string
   meter_id: string
@@ -7,6 +9,8 @@ interface MeterReadingRowProps {
 }
 
 export function MeterReadingRow({ id, meter_id, kwh, timestamp, verified }: MeterReadingRowProps) {
+  const t = useTranslations('meterReadingRow')
+
   return (
     <tr key={id} className="transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/40">
       <td className="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">{meter_id}</td>
@@ -22,7 +26,7 @@ export function MeterReadingRow({ id, meter_id, kwh, timestamp, verified }: Mete
               : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
           }`}
         >
-          {verified ? 'Verified' : 'Pending'}
+          {verified ? t('verified') : t('pending')}
         </span>
       </td>
     </tr>

@@ -1,8 +1,9 @@
 'use client' // .
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState } from 'react'
 import { X, Leaf, CheckCircle } from 'lucide-react'
 import { CopyableText } from './copy-button'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 
 interface Props {
   certificateId: string
@@ -16,44 +17,16 @@ export function RetireModal({ certificateId, kwh, onConfirm, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [succeeded, setSucceeded] = useState(false)
-  const dialogRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  const triggerRef = useRef<Element | null>(null)
 
-  // Capture triggering element and auto-focus dialog on mount; restore focus on unmount
-  useEffect(() => {
-    triggerRef.current = document.activeElement
-    // Focus the textarea so screen readers land in a useful place
-    setTimeout(() => inputRef.current?.focus(), 50)
-    return () => {
-      (triggerRef.current as HTMLElement | null)?.focus()
-    }
-  }, [])
-
-  // Escape key closes the modal (unless submitting)
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !submitting) onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, submitting])
-
-  // Focus trap: keep Tab inside the dialog
-  function handleTabKey(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== 'Tab') return
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-    if (!focusable || focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (e.shiftKey) {
-      if (document.activeElement === first) { e.preventDefault(); last.focus() }
-    } else {
-      if (document.activeElement === last) { e.preventDefault(); first.focus() }
-    }
-  }
+  // Trap focus inside the dialog, close on Escape (unless submitting), and
+  // restore focus to the trigger element on unmount.
+  const dialogRef = useFocusTrap<HTMLDivElement>({
+    onEscape: () => {
+      if (!submitting) onClose()
+    },
+    initialFocusRef: inputRef,
+  })
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -80,7 +53,6 @@ export function RetireModal({ certificateId, kwh, onConfirm, onClose }: Props) {
         aria-modal="true"
         aria-labelledby="retire-title"
         tabIndex={-1}
-        onKeyDown={handleTabKey}
         className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl outline-none dark:bg-gray-900"
       >
         <div className="mb-4 flex items-center justify-between">

@@ -60,6 +60,64 @@ test.describe('Accessibility (axe-core)', () => {
     }
   })
 
+  test('retire modal traps focus, closes on Escape, and has no violations', async ({ page }) => {
+    await page.goto('/verify')
+
+    const trigger = page.getByRole('button', { name: /retire/i }).first()
+    await trigger.focus()
+    await trigger.click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+
+    // Focus should move into the dialog on open
+    await expect(dialog.locator(':focus')).toHaveCount(1)
+
+    // Tab through all focusable elements and ensure focus stays inside the dialog
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('Tab')
+      const focusInside = await dialog.evaluate((node) => node.contains(document.activeElement))
+      expect(focusInside, 'Focus should remain trapped inside the retire modal').toBe(true)
+    }
+
+    // Run axe-core on the open dialog
+    await checkA11y(page)
+
+    // Escape closes the modal and restores focus to the trigger
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect(trigger).toBeFocused()
+  })
+
+  test('transfer modal traps focus, closes on Escape, and has no violations', async ({ page }) => {
+    await page.goto('/verify')
+
+    const trigger = page.getByRole('button', { name: /transfer/i }).first()
+    await trigger.focus()
+    await trigger.click()
+
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+
+    // Focus should move into the dialog on open
+    await expect(dialog.locator(':focus')).toHaveCount(1)
+
+    // Tab through all focusable elements and ensure focus stays inside the dialog
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('Tab')
+      const focusInside = await dialog.evaluate((node) => node.contains(document.activeElement))
+      expect(focusInside, 'Focus should remain trapped inside the transfer modal').toBe(true)
+    }
+
+    // Run axe-core on the open dialog
+    await checkA11y(page)
+
+    // Escape closes the modal and restores focus to the trigger
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeHidden()
+    await expect(trigger).toBeFocused()
+  })
+
   test('verify kiosk mode interactive elements have visible focus indicators', async ({ page }) => {
     await page.goto('/verify?kiosk=1')
 

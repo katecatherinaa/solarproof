@@ -91,6 +91,27 @@ jobs:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
+      # Storybook build is a required check: any failure fails the workflow.
+      - name: Storybook build
+        run: pnpm --filter @solarproof/web build-storybook
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'placeholder' }}
+          NEXT_PUBLIC_STELLAR_NETWORK: testnet
+          NEXT_PUBLIC_ENERGY_TOKEN_ID: placeholder
+          NEXT_PUBLIC_AUDIT_REGISTRY_ID: placeholder
+          NEXT_PUBLIC_COMMUNITY_GOVERNANCE_ID: placeholder
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
+
+      - name: Upload Storybook static build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: storybook-static
+          path: apps/web/storybook-static
+          retention-days: 7
+
   playwright-e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest

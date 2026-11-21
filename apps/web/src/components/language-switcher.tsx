@@ -2,6 +2,7 @@
 
 import { useTransition, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useTranslations } from 'next-intl'
 import { locales, LOCALE_LABELS, LOCALE_NAMES, type Locale } from '@/lib/locales'
 
 interface Props {
@@ -10,9 +11,11 @@ interface Props {
 
 export function LanguageSwitcher({ current }: Props) {
   const router = useRouter()
+  const t = useTranslations('languageSwitcher')
   const [, startTransition] = useTransition()
   const [announcement, setAnnouncement] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [activeLocale, setActiveLocale] = useState<Locale>(current)
 
   async function switchLocale(locale: Locale) {
     setIsSaving(true)
@@ -24,33 +27,36 @@ export function LanguageSwitcher({ current }: Props) {
       })
       if (!response.ok) throw new Error('Failed to save locale')
 
-      setAnnouncement(`Language changed to ${LOCALE_NAMES[locale]}`)
+      setActiveLocale(locale)
+      setAnnouncement(t('changed', { language: LOCALE_NAMES[locale] }))
       startTransition(() => router.refresh())
     } catch {
-      setAnnouncement('Unable to change language. Please try again.')
+      setAnnouncement(t('error'))
     } finally {
       setIsSaving(false)
     }
   }
 
   return (
-    <div role="group" aria-label="Language selector">
+    <div role="group" aria-label={t('label')}>
       {/* Screen reader announcement for selection change */}
       <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
         {announcement}
       </span>
 
       <label htmlFor="language-select" className="sr-only">
-        Select language
+        {t('selectLabel')}
       </label>
       <select
         id="language-select"
-        value={current}
+        value={activeLocale}
+        disabled={isSaving}
+        aria-busy={isSaving}
         onChange={(e) => switchLocale(e.target.value as Locale)}
         className="cursor-pointer appearance-none rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-yellow-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
       >
         {locales.map((l) => (
-          <option key={l} value={l}>
+          <option key={l} value={l} aria-current={l === activeLocale ? 'true' : undefined}>
             {LOCALE_LABELS[l]} — {LOCALE_NAMES[l]}
           </option>
         ))}

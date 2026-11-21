@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { ArrowRight, Clock, ExternalLink } from 'lucide-react'
 import { Skeleton } from '@/components/skeleton'
 
@@ -31,6 +32,7 @@ function formatDate(iso: string) {
 }
 
 export function TransferHistoryTimeline({ certificateId }: Props) {
+  const t = useTranslations('transferHistory')
   const [events, setEvents] = useState<TransferEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -47,7 +49,7 @@ export function TransferHistoryTimeline({ certificateId }: Props) {
         )
         if (!res.ok) {
           const body = await res.json().catch(() => ({}))
-          throw new Error(body.error ?? 'Failed to load transfer history')
+          throw new Error(body.error ?? t('loadError'))
         }
         const csv = await res.text()
         if (cancelled) return
@@ -81,14 +83,14 @@ export function TransferHistoryTimeline({ certificateId }: Props) {
         parsed.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
         setEvents(parsed)
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Unknown error')
+        if (!cancelled) setError(err instanceof Error ? err.message : t('unknownError'))
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
     load()
     return () => { cancelled = true }
-  }, [certificateId])
+  }, [certificateId, t])
 
   return (
     <section
@@ -100,11 +102,11 @@ export function TransferHistoryTimeline({ certificateId }: Props) {
         id="transfer-history-title"
         className="mb-4 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
       >
-        Transfer history
+        {t('title')}
       </h2>
 
       {loading && (
-        <ul aria-label="Loading transfer history" className="space-y-4">
+        <ul aria-label={t('loadingLabel')} className="space-y-4">
           {[0, 1, 2].map((i) => (
             <li key={i} className="flex flex-col gap-1.5">
               <Skeleton className="h-3 w-28" />
@@ -122,13 +124,13 @@ export function TransferHistoryTimeline({ certificateId }: Props) {
 
       {!loading && !error && events.length === 0 && (
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          No transfers have occurred for this certificate.
+          {t('empty')}
         </p>
       )}
 
       {!loading && !error && events.length > 0 && (
         <ol
-          aria-label={`${events.length} transfer event${events.length === 1 ? '' : 's'}`}
+          aria-label={t('eventCountLabel', { count: events.length })}
           className="relative space-y-0"
         >
           {events.map((event, i) => {
@@ -136,7 +138,12 @@ export function TransferHistoryTimeline({ certificateId }: Props) {
             return (
               <li
                 key={event.id}
-                aria-label={`Transfer ${i + 1}: from ${event.from_address} to ${event.to_address} on ${formatDate(event.timestamp)}`}
+                aria-label={t('eventAriaLabel', {
+                  index: i + 1,
+                  from: event.from_address,
+                  to: event.to_address,
+                  date: formatDate(event.timestamp),
+                })}
                 className="flex gap-3"
               >
                 {/* Timeline spine */}
@@ -178,11 +185,11 @@ export function TransferHistoryTimeline({ certificateId }: Props) {
                         href={`https://stellar.expert/explorer/testnet/tx/${event.transfer_tx_hash}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        aria-label={`View transfer transaction ${event.transfer_tx_hash.slice(0, 12)}… on Stellar Explorer (opens in new tab)`}
+                        aria-label={t('viewTxLabel', { hash: `${event.transfer_tx_hash.slice(0, 12)}…` })}
                         className="inline-flex items-center gap-0.5 text-xs text-blue-600 hover:underline dark:text-blue-400"
                       >
                         <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                        Explorer
+                        {t('explorer')}
                       </a>
                     )}
                   </div>

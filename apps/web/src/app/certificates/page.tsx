@@ -12,6 +12,7 @@ import { usePersistentFilters } from '@/hooks/usePersistentFilters'
 import { WalletGate } from '@/components/wallet-gate'
 import { TableRowSkeleton } from '@/components/skeleton'
 import { ErrorBoundary } from '@/components/error-boundary'
+import { CertificatesEmptyState } from '@/components/empty-states/certificates-empty-state'
 
 const MAX_BULK = 100
 
@@ -453,6 +454,9 @@ export default function CertificatesPage() {
           </p>
         )}
 
+        {!isLoading && !error && data.length === 0 ? (
+          <CertificatesEmptyState onRegisterMeter={() => router.push('/meters')} />
+        ) : (
         <ErrorBoundary inline label="Certificate table">
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
           <div className="overflow-x-auto">
@@ -572,6 +576,7 @@ export default function CertificatesPage() {
           </div>
         </div>
         </ErrorBoundary>
+        )}
 
         {retiring && (
           <RetireModal

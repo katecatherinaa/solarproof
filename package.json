@@ -11,6 +11,7 @@
     "test": "turbo test",
     "test:coverage": "pnpm --filter @solarproof/web vitest run --coverage",
     "e2e": "pnpm --filter @solarproof/web exec playwright test",
+    "storybook": "pnpm --filter @solarproof/web storybook",
     "integration:test": "node scripts/local-soroban-integration.mjs",
     "bridge:dev": "pnpm --filter @solarproof/bridge dev",
     "bridge:build": "pnpm --filter @solarproof/bridge build",

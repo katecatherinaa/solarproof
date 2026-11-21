@@ -1,8 +1,9 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState } from 'react'
 import { X, ArrowRightLeft } from 'lucide-react'
 import { CopyableText } from './copy-button'
+import { useFocusTrap } from '../hooks/use-focus-trap'
 
 interface Props {
   certificateId: string
@@ -28,41 +29,14 @@ export function TransferModal({ certificateId, kwh, onConfirm, onClose }: Props)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [touched, setTouched] = useState(false)
   const dialogRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<Element | null>(null)
 
-  // Capture triggering element and auto-focus dialog on mount; restore focus on unmount
-  useEffect(() => {
-    triggerRef.current = document.activeElement
-    dialogRef.current?.focus()
-    return () => {
-      (triggerRef.current as HTMLElement | null)?.focus()
-    }
-  }, [])
-
-  // Escape key closes the modal
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !submitting) onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, submitting])
-
-  // Focus trap: keep Tab inside the dialog
-  function handleTabKey(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (e.key !== 'Tab') return
-    const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-    if (!focusable || focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (e.shiftKey) {
-      if (document.activeElement === first) { e.preventDefault(); last.focus() }
-    } else {
-      if (document.activeElement === last) { e.preventDefault(); first.focus() }
-    }
-  }
+  // Trap focus inside the dialog, move initial focus to the heading, close on
+  // Escape (unless submitting), and restore focus to the trigger on unmount.
+  useFocusTrap(dialogRef, {
+    onEscape: onClose,
+    escapeEnabled: !submitting,
+    initialFocus: 'heading',
+  })
 
   function handleAddressChange(value: string) {
     setToAddress(value)
@@ -106,13 +80,16 @@ export function TransferModal({ certificateId, kwh, onConfirm, onClose }: Props)
         aria-modal="true"
         aria-labelledby="transfer-title"
         tabIndex={-1}
-        onKeyDown={handleTabKey}
         className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl outline-none dark:bg-gray-900"
       >
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ArrowRightLeft className="h-5 w-5 text-blue-500" aria-hidden="true" />
-            <h2 id="transfer-title" className="text-base font-semibold text-gray-900 dark:text-gray-100">
+            <h2
+              id="transfer-title"
+              tabIndex={-1}
+              className="text-base font-semibold text-gray-900 outline-none dark:text-gray-100"
+            >
               Transfer certificate
             </h2>
           </div>
