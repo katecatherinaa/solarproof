@@ -189,8 +189,8 @@ html {
    complement the Tailwind utility classes used in the verify page. */
 
 .kiosk {
-  min-height: 100vh;
-  min-width: 100vw;
+  min-block-size: 100vh;
+  min-inline-size: 100vw;
   /* Larger base font size for readability at a distance. */
   font-size: 1.25rem; /* 20px */
   line-height: 1.6;
@@ -210,8 +210,8 @@ html {
 .kiosk a,
 .kiosk [role="button"],
 .kiosk [role="link"] {
-  min-width: 44px;
-  min-height: 44px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
 }
 
 /* Keep the focus ring visible and high-contrast in kiosk mode. */
@@ -246,6 +246,33 @@ html {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   RTL support
+   ---------------------------------------------------------------------------
+   When an RTL locale (e.g. Arabic, Hebrew) is active, the `dir="rtl"`
+   attribute is set on <html>. These rules keep layouts unbroken by relying on
+   logical properties and by mirroring directional icons where needed. */
+
+/* Mirror directional icons (arrows, chevrons) in RTL layouts. */
+[dir="rtl"] .rtl-flip {
+  transform: scaleX(-1);
+}
+
+/* Ensure text alignment follows the document direction rather than a fixed
+   physical side. */
+[dir="rtl"] .text-start {
+  text-align: right;
+}
+
+[dir="rtl"] .text-end {
+  text-align: left;
+}
+
+/* Keep the kiosk focus ring offset consistent in RTL. */
+[dir="rtl"] .kiosk :focus-visible {
+  outline-offset: 3px;
 }
 
 /* ---------------------------------------------------------------------------

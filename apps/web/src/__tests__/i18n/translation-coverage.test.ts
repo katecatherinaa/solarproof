@@ -36,6 +36,7 @@ describe('i18n translation coverage', () => {
   const enKeys = new Set(collectKeyPaths(loadMessages('en')));
   const esKeys = new Set(collectKeyPaths(loadMessages('es')));
   const ptBRKeys = new Set(collectKeyPaths(loadMessages('pt-BR')));
+  const locales = ['fr', 'es'] as const;
 
   it('messages/es.json has the same key set as messages/en.json', () => {
     const missingInEs = [...enKeys].filter((key) => !esKeys.has(key)).sort();

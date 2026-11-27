@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PlusCircle, ShieldOff } from 'lucide-react'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { usePersistentFilters } from '@/hooks/use-persistent-filters'
+import { MetersEmptyState } from '@/components/empty-states/meters-empty-state'
 
 interface Meter {
   id: string
@@ -597,6 +598,9 @@ export default function MetersPage() {
           </button>
         </div>
 
+        {!isLoading && isRestored && !error && meters && meters.length === 0 ? (
+          <MetersEmptyState />
+        ) : (
         <ErrorBoundary inline label="Meter list">
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
           <div className="overflow-x-auto">
@@ -700,6 +704,7 @@ export default function MetersPage() {
           </div>
         </div>
         </ErrorBoundary>
+        )}
 
         {revokeTarget && (
           <RevokeDialog

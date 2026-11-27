@@ -70,6 +70,7 @@ export function useToast() {
 // Toast UI
 // ---------------------------------------------------------------------------
 import { CheckCircle, XCircle, Loader2, X } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 
 const icons: Record<ToastVariant, React.ElementType> = {
   success: CheckCircle,
@@ -85,30 +86,31 @@ const styles: Record<ToastVariant, string> = {
 
 export function ToastContainer() {
   const { toasts, dismiss } = useToast()
+  const t = useTranslations('toast')
   if (toasts.length === 0) return null
 
   return (
     <div
       aria-live="polite"
       aria-atomic="true"
-      aria-label="Notifications"
+      aria-label={t('notifications')}
       className="fixed end-4 bottom-4 z-50 flex flex-col gap-2"
     >
-      {toasts.map((t) => {
-        const Icon = icons[t.variant]
+      {toasts.map((toast) => {
+        const Icon = icons[toast.variant]
         return (
           <div
-            key={t.id}
-            className={`flex max-w-sm items-start gap-3 rounded-lg border px-4 py-3 shadow-md ${styles[t.variant]}`}
+            key={toast.id}
+            className={`flex max-w-sm items-start gap-3 rounded-lg border px-4 py-3 shadow-md ${styles[toast.variant]}`}
           >
             <Icon
-              className={`mt-0.5 h-4 w-4 shrink-0 ${t.variant === 'pending' ? 'animate-spin' : ''}`}
+              className={`mt-0.5 h-4 w-4 shrink-0 ${toast.variant === 'pending' ? 'animate-spin' : ''}`}
               aria-hidden="true"
             />
-            <p className="flex-1 text-sm">{t.message}</p>
+            <p className="flex-1 text-sm">{toast.message}</p>
             <button
-              onClick={() => dismiss(t.id)}
-              aria-label="Dismiss notification"
+              onClick={() => dismiss(toast.id)}
+              aria-label={t('dismiss')}
               className="ms-1 shrink-0 opacity-60 hover:opacity-100"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />

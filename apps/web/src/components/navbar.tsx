@@ -42,6 +42,7 @@ interface CooperativeMeResponse {
 const network = env.NEXT_PUBLIC_STELLAR_NETWORK
 
 function NetworkBadge() {
+  const t = useTranslations('nav')
   const isMainnet = network === 'mainnet'
   return (
     <a
@@ -52,8 +53,8 @@ function NetworkBadge() {
       }
       target="_blank"
       rel="noopener noreferrer"
-      aria-label={`Stellar ${isMainnet ? 'Mainnet' : 'Testnet'} — view network info`}
-      title={isMainnet ? 'Connected to Stellar Mainnet' : 'Connected to Stellar Testnet — not a production environment'}
+      aria-label={t('networkBadgeAria', { network: isMainnet ? t('mainnet') : t('testnet') })}
+      title={isMainnet ? t('networkMainnetTitle') : t('networkTestnetTitle')}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
         isMainnet
           ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
@@ -66,7 +67,7 @@ function NetworkBadge() {
           isMainnet ? 'bg-green-500' : 'animate-pulse bg-yellow-500'
         }`}
       />
-      {isMainnet ? 'Mainnet' : 'Testnet'}
+      {isMainnet ? t('mainnet') : t('testnet')}
     </a>
   )
 }
@@ -364,14 +365,14 @@ export function Navbar({ locale }: NavbarProps) {
   return (
     <nav
       className="border-b border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-900"
-      aria-label="Main navigation"
+      aria-label={t('mainNavigation')}
     >
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3">
         {/* Logo */}
         <Link
           href="/"
           className="flex items-center gap-2 font-semibold text-gray-900 dark:text-gray-100"
-          aria-label="SolarProof home"
+          aria-label={t('homeAria')}
         >
           <Sun className="h-5 w-5 text-yellow-500" aria-hidden="true" />
           SolarProof
@@ -458,11 +459,11 @@ export function Navbar({ locale }: NavbarProps) {
           id="mobile-menu"
           ref={menuRef}
           role="dialog"
-          aria-label="Navigation menu"
+          aria-label={t('navigationMenu')}
           aria-modal="true"
           className="border-t border-gray-200 bg-white px-4 pb-4 pt-2 dark:border-gray-800 dark:bg-gray-900 md:hidden"
         >
-          <nav aria-label="Mobile navigation">
+          <nav aria-label={t('mobileNavigation')}>
             <ul className="space-y-1">
               {links.map((l) => {
                 const active = pathname === l.href
@@ -555,12 +556,12 @@ export function Navbar({ locale }: NavbarProps) {
                       </p>
                       <p className="mt-1 font-mono text-sm text-gray-900 dark:text-gray-100">{address.slice(0, 4)}…{address.slice(-4)}</p>
                       <div className="mt-2 flex items-center gap-2">
-                        <CopyButton value={address} label={`Copy wallet address ${address}`} iconSize={12} />
+                        <CopyButton value={address} label={t('copyWalletAddress', { address })} iconSize={12} />
                         <button
                           onClick={disconnect}
                           className="rounded-md bg-red-100 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-800"
                         >
-                          Disconnect
+                          {t('disconnect')}
                         </button>
                       </div>
                     </div>

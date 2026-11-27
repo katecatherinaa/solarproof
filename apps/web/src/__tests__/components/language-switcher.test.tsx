@@ -4,10 +4,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LanguageSwitcher } from '@/components/language-switcher'
 
-const mocks = vi.hoisted(() => ({ refresh: vi.fn() }))
+const mocks = vi.hoisted(() => ({ refresh: vi.fn(), t: vi.fn() }))
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: mocks.refresh }),
+}))
+
+vi.mock('@/lib/i18n', () => ({
+  useTranslation: () => ({ t: mocks.t }),
 }))
 
 describe('LanguageSwitcher', () => {
@@ -15,6 +19,8 @@ describe('LanguageSwitcher', () => {
 
   beforeEach(() => {
     mocks.refresh.mockReset()
+    mocks.t.mockReset()
+    mocks.t.mockImplementation((key: string) => key)
     fetchMock.mockReset()
     vi.stubGlobal('fetch', fetchMock)
   })
@@ -32,6 +38,9 @@ describe('LanguageSwitcher', () => {
 
   it('persists the selected locale through the API before refreshing', async () => {
     fetchMock.mockResolvedValue({ ok: true })
+    mocks.t.mockImplementation((key: string, options?: { language?: string }) =>
+      key === 'languageSwitcher.success' ? `Language changed to ${options?.language}` : key
+    )
     render(<LanguageSwitcher current="en" />)
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'es' } })
@@ -42,6 +51,7 @@ describe('LanguageSwitcher', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ locale: 'es' }),
     })
+    expect(mocks.t).toHaveBeenCalledWith('languageSwitcher.success', { language: 'Español' })
     expect(screen.getByRole('status').textContent).toBe('Language changed to Español')
   })
 
@@ -65,6 +75,9 @@ describe('LanguageSwitcher', () => {
 
   it('announces an API failure without refreshing', async () => {
     fetchMock.mockResolvedValue({ ok: false })
+    mocks.t.mockImplementation((key: string) =>
+      key === 'languageSwitcher.error' ? 'Unable to change language. Please try again.' : key
+    )
     render(<LanguageSwitcher current="en" />)
 
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'fr' } })
@@ -72,6 +85,24 @@ describe('LanguageSwitcher', () => {
     await waitFor(() =>
       expect(screen.getByRole('status').textContent).toBe('Unable to change language. Please try again.')
     )
+    expect(mocks.t).toHaveBeenCalledWith('languageSwitcher.error')
     expect(mocks.refresh).not.toHaveBeenCalled()
+  })
+
+  it('keeps the layout intact when rendered in an RTL document', () => {
+    document.documentElement.setAttribute('dir', 'rtl')
+    document.documentElement.setAttribute('lang', 'ar')
+
+    try {
+      const { container } = render(<LanguageSwitcher current="ar" />)
+
+      expect(document.documentElement.getAttribute('dir')).toBe('rtl')
+      expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('ar')
+      expect(container.firstElementChild).not.toBeNull()
+      expect(container.querySelector('[dir="ltr"]')).toBeNull()
+    } finally {
+      document.documentElement.removeAttribute('dir')
+      document.documentElement.removeAttribute('lang')
+    }
   })
 })

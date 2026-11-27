@@ -1,3 +1,5 @@
+import { useTranslations } from 'next-intl'
+
 interface MeterReadingRowProps {
   id: string
   meter_id: string
@@ -22,7 +24,7 @@ export function MeterReadingRow({ meter_id, kwh, timestamp, verified }: MeterRea
               : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
           }`}
         >
-          {verified ? 'Verified' : 'Pending'}
+          {verified ? t('verified') : t('pending')}
         </span>
       </td>
     </tr>

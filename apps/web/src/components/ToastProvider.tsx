@@ -1,6 +1,7 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import { X, CheckCircle2, AlertTriangle, Info } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
@@ -36,6 +37,7 @@ interface ToastProviderProps {
 const ToastContext = createContext<ToastContextValue | null>(null)
 
 export function ToastProvider({ children, cooperativeId }: ToastProviderProps) {
+  const t = useTranslations('toast')
   const [toasts, setToasts] = useState<ToastMessage[]>([])
 
   const pushToast = useCallback((toast: ToastPayload) => {
@@ -128,7 +130,7 @@ export function ToastProvider({ children, cooperativeId }: ToastProviderProps) {
                     type="button"
                     onClick={() => dismissToast(toast.id)}
                     className="inline-flex h-8 w-8 items-center justify-center rounded-full text-current/70 transition hover:text-current"
-                    aria-label={`Dismiss ${toast.title} notification`}
+                    aria-label={t('dismiss', { title: toast.title })}
                   >
                     <X className="h-4 w-4" aria-hidden="true" />
                   </button>

@@ -8,6 +8,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ProposalListSkeleton } from '@/components/skeleton'
 import { ErrorBoundary } from '@/components/error-boundary'
+import { GovernanceEmptyState } from '@/components/empty-states'
 
 const PAGE_SIZES = [10, 25, 50] as const
 type PageSize = typeof PAGE_SIZES[number]
@@ -640,10 +641,15 @@ export default function GovernancePage() {
         </section>
       )}
 
-      {!isLoading && active.length === 0 && closed.length === 0 && (
-        <p className="py-12 text-center text-sm text-gray-500 dark:text-gray-400">
-          No proposals found for your cooperative.
-        </p>
+      {!isLoading && !error && active.length === 0 && closed.length === 0 && (
+        <GovernanceEmptyState
+          onCreateProposal={() => {
+            setShowForm(true)
+            if (typeof document !== 'undefined') {
+              document.getElementById('create-proposal-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+          }}
+        />
       )}
 
       {/* ── Pagination Controls ───────────────────────────────────────────── */}
